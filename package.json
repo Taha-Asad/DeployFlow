@@ -1,0 +1,227 @@
+{
+  "name": "deployflow-ai",
+  "displayName": "DeployFlow AI 🚀",
+  "description": "Code to Cloud in One Click — AI-powered deployment automation",
+  "version": "1.0.0",
+  "publisher": "deployflow",
+  "license": "MIT",
+  "icon": "webviews/assets/logo.png",
+  "galleryBanner": {
+    "color": "#0f0f23",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.119.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Debuggers"
+  ],
+  "keywords": [
+    "deploy",
+    "docker",
+    "kubernetes",
+    "ai",
+    "devops",
+    "aws",
+    "vps",
+    "ssh",
+    "cicd",
+    "automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/deployflow-ai"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "deployflow.deploy",
+        "title": "🚀 Deploy Project",
+        "category": "DeployFlow"
+      },
+      {
+        "command": "deployflow.analyze",
+        "title": "🔍 Analyze Project",
+        "category": "DeployFlow"
+      },
+      {
+        "command": "deployflow.generateDocs",
+        "title": "📄 Generate SDLC Docs",
+        "category": "DeployFlow"
+      },
+      {
+        "command": "deployflow.rollback",
+        "title": "⏮️ Rollback Deployment",
+        "category": "DeployFlow"
+      },
+      {
+        "command": "deployflow.configure",
+        "title": "⚙️ Configure DeployFlow",
+        "category": "DeployFlow"
+      },
+      {
+        "command": "deployflow.showProgress",
+        "title": "📊 Show Deploy Progress",
+        "category": "DeployFlow"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "deployflow.deploy"
+        },
+        {
+          "command": "deployflow.analyze"
+        },
+        {
+          "command": "deployflow.generateDocs"
+        },
+        {
+          "command": "deployflow.rollback"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "deployflow.deploy",
+          "group": "deployflow@1",
+          "when": "explorerResourceIsFolder"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "DeployFlow AI",
+      "properties": {
+        "deployflow.aiProvider": {
+          "type": "string",
+          "default": "ollama",
+          "enum": [
+            "ollama",
+            "openai",
+            "anthropic",
+            "gemini"
+          ],
+          "description": "Which AI provider to use for build error fixing"
+        },
+        "deployflow.ollamaUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "URL for your local Ollama server"
+        },
+        "deployflow.ollamaModel": {
+          "type": "string",
+          "default": "codellama",
+          "description": "Which Ollama model to use (codellama, llama2, mistral)"
+        },
+        "deployflow.defaultTarget": {
+          "type": "string",
+          "default": "vps",
+          "enum": [
+            "vps",
+            "vercel",
+            "netlify",
+            "cloudflare",
+            "aws",
+            "gcp",
+            "azure"
+          ],
+          "description": "Default deployment target"
+        },
+        "deployflow.maxFixAttempts": {
+          "type": "number",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 5,
+          "description": "How many times AI should try to fix build errors"
+        },
+        "deployflow.enableTrivyScan": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan Docker images for security vulnerabilities"
+        },
+        "deployflow.enableMonitoring": {
+          "type": "boolean",
+          "default": false,
+          "description": "Generate Prometheus/Grafana monitoring configs"
+        },
+        "deployflow.enableKubernetes": {
+          "type": "boolean",
+          "default": false,
+          "description": "Generate Kubernetes manifests"
+        },
+        "deployflow.logLevel": {
+          "type": "string",
+          "default": "info",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "description": "How much detail to log"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "deployflow-sidebar",
+          "title": "DeployFlow AI",
+          "icon": "webviews/assets/icons/rocket.svg"
+        }
+      ]
+    },
+    "views": {
+      "deployflow-sidebar": [
+        {
+          "icon": "",
+          "type": "webview",
+          "id": "deployflow.progressPanel",
+          "name": "Deploy Progress"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "tsc -p ./",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production",
+    "compile-tests": "tsc -p ./tsconfig.test.json",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts",
+    "format": "prettier --write src/**/*.ts"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.19.19",
+    "@types/ssh2": "^1.11.23",
+    "@types/vscode": "^1.119.0",
+    "mocha": "^11.7.5",
+    "prettier": "^3.5.0",
+    "ts-loader": "^9.5.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.24.0",
+    "webpack": "^5.97.1",
+    "webpack-cli": "^6.0.1"
+  },
+  "dependencies": {
+    "ignore": "^7.0.3",
+    "js-yaml": "^4.1.0",
+    "node-fetch": "^3.3.2",
+    "ssh2": "^1.16.0",
+    "uuid": "^11.0.5"
+  },
+  "overrides": {
+    "diff": "8.0.3",
+    "serialize-javascript": "7.0.5",
+    "glob": "13.0.6"
+  }
+}

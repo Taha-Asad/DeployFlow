@@ -1,0 +1,142 @@
+"use strict";
+// ─────────────────────────────────────────────────────────────────────────────
+// src/utils/ShellUtils.ts
+// Run shell commands (like npm build, docker build, etc.) from TypeScript
+// ─────────────────────────────────────────────────────────────────────────────
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ShellUtils = void 0;
+// `child_process` is a built-in Node.js module for running system commands
+// `spawn` runs a command and lets us watch its output in real time
+// `exec` runs a command and gives us ALL output when it finishes
+const child_process_1 = require("child_process");
+// `promisify` converts "callback-style" functions to "async/await" style
+// Node.js old functions use callbacks (confusing), we convert to modern style
+const util_1 = require("util");
+const Logger_1 = require("./Logger");
+// Convert `exec` to work with async/await
+// Now we can write: `const result = await execAsync('ls -la')`
+// Instead of the old confusing: `exec('ls -la', (err, stdout, stderr) => { ... })`
+const execAsync = (0, util_1.promisify)(child_process_1.exec);
+class ShellUtils {
+    logger;
+    constructor() {
+        this.logger = Logger_1.Logger.getInstance();
+    }
+    bashEnv(extra) {
+        return {
+            ...process.env,
+            BASH_ENV: `${process.env.HOME}/.bashrc`,
+            ...(extra || {}),
+        };
+    }
+    // ── Run a command and wait for it to finish ──────────────────────────
+    // Returns ALL the output when done
+    // Good for: `docker build`, `npm install`, `scp file server:`
+    async run(command, options = {}) {
+        this.logger.debug(`Running command: ${command}`, { cwd: options.cwd });
+        try {
+            const { stdout, stderr } = await execAsync(command, {
+                cwd: options.cwd,
+                shell: "/bin/bash",
+                env: this.bashEnv(options.env),
+                timeout: options.timeout || 300000,
+                maxBuffer: 1024 * 1024 * 10,
+            });
+            this.logger.debug(`Command succeeded: ${command}`);
+            return {
+                stdout: stdout.trim(), // Remove leading/trailing whitespace
+                stderr: stderr.trim(),
+                exitCode: 0,
+                success: true,
+            };
+        }
+        catch (error) {
+            // When a command fails, Node.js throws an error
+            // The error object has `stdout`, `stderr`, and `code` (exit code)
+            const err = error;
+            const stdout = err.stdout?.trim() || "";
+            const stderr = err.stderr?.trim() || err.message || "Unknown error";
+            const exitCode = err.code || 1;
+            this.logger.debug(`Command failed (exit ${exitCode}): ${command}`);
+            return {
+                stdout,
+                stderr,
+                exitCode,
+                success: false,
+            };
+        }
+    }
+    // ── Run a command AND stream its output in real-time ─────────────────
+    // Good for long-running commands where you want to see progress
+    // For example: `npm install` shows each package being installed
+    async runStreaming(command, args, // Command arguments as an array ['--no-cache', '-t', 'myapp']
+    options = {}) {
+        this.logger.debug(`Running streaming command: ${command} ${args.join(" ")}`);
+        // `spawn` starts a process and gives us streams to read from
+        // We separate the command from its arguments for safety
+        // (prevents shell injection attacks)
+        const process_child = (0, child_process_1.spawn)(command, args, {
+            cwd: options.cwd,
+            env: this.bashEnv(options.env),
+            shell: "/bin/bash",
+        });
+        // Collect all output
+        let stdout = "";
+        let stderr = "";
+        // `stdout` is a "stream" — data comes out piece by piece
+        // We listen for 'data' events, convert to string, and collect
+        process_child.stdout?.on("data", (data) => {
+            // Buffer is raw bytes — `.toString()` converts to text
+            const text = data.toString();
+            stdout += text;
+            // Split into lines and report each one
+            // This lets the caller show progress line by line
+            const lines = text.split("\n").filter((l) => l.trim());
+            lines.forEach((line) => {
+                this.logger.debug(`  > ${line}`);
+                options.onOutput?.(line); // Call the callback if provided
+            });
+        });
+        // Same but for error output (stderr)
+        process_child.stderr?.on("data", (data) => {
+            const text = data.toString();
+            stderr += text;
+            const lines = text.split("\n").filter((l) => l.trim());
+            lines.forEach((line) => {
+                this.logger.debug(`  ! ${line}`);
+                options.onOutput?.(line);
+            });
+        });
+        // Wait for the process to finish
+        // We wrap it in a Promise so we can use async/await
+        const exitCode = await new Promise((resolve) => {
+            // 'close' event fires when the process is done
+            // `code` is the exit code (0 = success)
+            process_child.on("close", (code) => {
+                resolve(code || 0);
+            });
+            // Handle if the process crashes with an error
+            process_child.on("error", () => {
+                resolve(1); // Treat as failure
+            });
+        });
+        return {
+            stdout: stdout.trim(),
+            stderr: stderr.trim(),
+            exitCode,
+            success: exitCode === 0,
+        };
+    }
+    // ── Check if a command exists on the system ──────────────────────────
+    // Example: check if Docker is installed before trying to use it
+    async commandExists(command) {
+        // `which` on Linux/Mac tells you if a command exists
+        // `where` does the same on Windows
+        // We check which OS we're on first
+        const checkCommand = process.platform === "win32" ? `where ${command}` : `which ${command}`;
+        const result = await this.run(checkCommand);
+        return result.success;
+    }
+}
+exports.ShellUtils = ShellUtils;
+//# sourceMappingURL=ShellUtils.js.map
