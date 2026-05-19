@@ -37,11 +37,22 @@ export class SshDeployer {
   private async checkDocker(
     creds: SshCredentials,
   ): Promise<{ available: boolean; error?: string }> {
-    // Check if the docker command exists
-    const whichResult = await this.runRemoteCommand(
-      creds,
-      "command -v docker >/dev/null 2>&1 && echo found || echo notfound",
-    ).catch(() => "notfound");
+    // Check if the docker command exists.
+    // Non-interactive SSH may not load ~/.bashrc / ~/.profile, so we check
+    // common install paths directly in addition to PATH lookup.
+    let whichResult: string;
+    try {
+      whichResult = await this.runRemoteCommand(
+        creds,
+        "{ command -v docker || [ -x /usr/bin/docker ] || [ -x /usr/local/bin/docker ] || [ -x /snap/bin/docker ]; } >/dev/null 2>&1 && echo found || echo notfound",
+      );
+    } catch (sshError) {
+      const msg = sshError instanceof Error ? sshError.message : String(sshError);
+      return {
+        available: false,
+        error: `SSH connection failed: ${msg}`,
+      };
+    }
 
     if (whichResult.trim() !== "found") {
       return {
@@ -86,6 +97,81 @@ export class SshDeployer {
     };
   }
 
+  // ── Detect package manager on remote server ─────────────────────────────
+  private async detectPackageManager(
+    creds: SshCredentials,
+  ): Promise<string | null> {
+    const result = await this.runRemoteCommand(
+      creds,
+      "command -v apt-get >/dev/null && echo apt-get && exit 0; " +
+      "command -v dnf >/dev/null && echo dnf && exit 0; " +
+      "command -v yum >/dev/null && echo yum && exit 0; " +
+      "command -v apk >/dev/null && echo apk && exit 0; " +
+      "command -v pacman >/dev/null && echo pacman && exit 0; " +
+      "command -v zypper >/dev/null && echo zypper && exit 0; " +
+      "echo unknown",
+    ).catch(() => "unknown");
+    return result.trim().split('\n').pop() || null;
+  }
+
+  // ── Auto-install Docker on remote server ────────────────────────────────
+  private async installDocker(
+    creds: SshCredentials,
+    pm: string,
+  ): Promise<boolean> {
+    const installCommands: Record<string, string> = {
+      'apt-get': 'apt-get update -qq && apt-get install -y -qq docker.io',
+      'dnf': 'dnf install -y docker-ce docker-ce-cli containerd.io',
+      'yum': 'yum install -y docker-ce docker-ce-cli containerd.io',
+      'apk': 'apk add docker && rc-update add docker',
+      'pacman': 'pacman -S --noconfirm docker',
+      'zypper': 'zypper install -y docker',
+    };
+
+    const cmd = installCommands[pm];
+    if (!cmd) return false;
+
+    try {
+      await this.runRemoteCommand(creds, cmd);
+      // Start Docker daemon after install
+      const startCmd =
+        pm === 'apk'
+          ? 'service docker start'
+          : 'systemctl start docker 2>/dev/null || service docker start 2>/dev/null || true';
+      await this.runRemoteCommand(creds, startCmd);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ── Start Docker daemon on remote server ────────────────────────────────
+  private async startDockerDaemon(creds: SshCredentials): Promise<boolean> {
+    const startAttempts = [
+      "systemctl start docker 2>&1",
+      "service docker start 2>&1",
+      "dockerd > /dev/null 2>&1 &",
+      "nohup dockerd > /var/log/dockerd.log 2>&1 &",
+    ];
+
+    for (const cmd of startAttempts) {
+      try {
+        await this.runRemoteCommand(creds, cmd);
+        // Give the daemon a moment to start
+        await new Promise((r) => setTimeout(r, 2000));
+        // Check if daemon is now responsive
+        const check = await this.runRemoteCommand(
+          creds,
+          "docker info >/dev/null 2>&1 && echo ok || echo fail",
+        ).catch(() => "fail");
+        if (check.trim() === "ok") return true;
+      } catch {
+        continue;
+      }
+    }
+    return false;
+  }
+
   // ── Main deploy method ────────────────────────────────────────────────
   public async deploy(
     projectInfo: ProjectInfo,
@@ -103,9 +189,50 @@ export class SshDeployer {
       onProgress("🔍 Checking remote server prerequisites...");
       const dockerCheck = await this.checkDocker(credentials);
       if (!dockerCheck.available) {
-        throw new Error(dockerCheck.error);
+        onProgress(`❌ ${dockerCheck.error}`);
+
+        if (dockerCheck.error?.includes("Docker is not installed")) {
+          // ── Auto-install Docker ────────────────────────────
+          onProgress("🔄 Detecting OS to install Docker automatically...");
+          const pm = await this.detectPackageManager(credentials);
+          if (pm) {
+            onProgress(`📦 Installing Docker via ${pm}...`);
+            const installed = await this.installDocker(credentials, pm);
+            if (installed) {
+              onProgress("✅ Docker installed. Re-checking...");
+              const recheck = await this.checkDocker(credentials);
+              if (recheck.available) {
+                onProgress("✅ Docker available on remote server");
+              } else {
+                return { success: false, error: recheck.error };
+              }
+            } else {
+              return { success: false, error: dockerCheck.error };
+            }
+          } else {
+            return { success: false, error: dockerCheck.error };
+          }
+        } else if (dockerCheck.error?.includes("Docker daemon is not running")) {
+          // ── Auto-start Docker daemon ───────────────────────
+          onProgress("🔄 Attempting to start Docker daemon...");
+          const started = await this.startDockerDaemon(credentials);
+          if (started) {
+            onProgress("✅ Docker daemon started. Re-checking...");
+            const recheck = await this.checkDocker(credentials);
+            if (recheck.available) {
+              onProgress("✅ Docker available on remote server");
+            } else {
+              return { success: false, error: recheck.error };
+            }
+          } else {
+            return { success: false, error: dockerCheck.error };
+          }
+        } else {
+          return { success: false, error: dockerCheck.error };
+        }
+      } else {
+        onProgress("✅ Docker available on remote server");
       }
-      onProgress("✅ Docker available on remote server");
 
       // ── 1. Upload the Docker image ─────────────────────────────────
       onProgress("📤 Uploading Docker image to server...");
@@ -243,13 +370,21 @@ export class SshDeployer {
           });
 
           // Command finished
-          stream.on("close", (code: number) => {
+          let exitCode: number | null | undefined;
+
+          stream.on("exit", (code: number | null) => {
+            exitCode = code;
+          });
+
+          stream.on("close", () => {
             conn.end();
-            if (code === 0) {
+            if (exitCode === 0 || exitCode === null || exitCode === undefined) {
               resolve(stdout);
             } else {
               reject(
-                new Error(`Command failed (exit ${code}): ${stderr || stdout}`),
+                new Error(
+                  `Command failed (exit ${exitCode}): ${stderr || stdout}`,
+                ),
               );
             }
           });

@@ -344,21 +344,37 @@ export class ErrorFixer {
 
   // ── Gather relevant files to send to AI as context ────────────────────
   // We don't send ALL files — just the ones likely related to the error
+  // Total context is capped to prevent OOM in the extension host
+  private readonly MAX_CONTEXT_SIZE = 50_000; // characters total
+  private readonly MAX_FILE_SIZE = 8_000; // characters per file
+
   private async gatherContextFiles(
     projectPath: string,
     errorOutput: string,
   ): Promise<Map<string, string>> {
     const files = new Map<string, string>();
+    let totalSize = 0;
+
+    // Helper: add a file if we haven't hit the budget cap
+    const addFile = (name: string, content: string): void => {
+      if (files.has(name) || totalSize >= this.MAX_CONTEXT_SIZE) return;
+      const truncated =
+        content.length > this.MAX_FILE_SIZE
+          ? content.slice(0, this.MAX_FILE_SIZE) +
+            `\n\n[...truncated, was ${content.length} chars]`
+          : content;
+      files.set(name, truncated);
+      totalSize += truncated.length;
+    };
 
     // ── Always include these key config files ────────────────────────
     const alwaysInclude = [
       "package.json",
       "tsconfig.json",
-      "tsconfig.*.json",
-      "webpack.config.js",
-      "webpack.config.ts",
       "vite.config.js",
       "vite.config.ts",
+      "webpack.config.js",
+      "webpack.config.ts",
       "requirements.txt",
       "pyproject.toml",
       "pom.xml",
@@ -373,13 +389,11 @@ export class ErrorFixer {
       const filePath = path.join(projectPath, filename);
       const content = await this.fileUtils.readFile(filePath);
       if (content) {
-        files.set(filename, content);
+        addFile(filename, content);
       }
     }
 
     // ── Extract file names mentioned in the error output ──────────────
-    // Errors often say things like "Error in src/index.ts at line 42"
-    // We find these file references and include those files too
     const filePattern =
       /(?:^|\s)([./\w-]+\.(?:ts|tsx|js|jsx|py|java|go|rs|php))/gm;
     const mentionedFiles = new Set<string>();
@@ -387,22 +401,23 @@ export class ErrorFixer {
 
     while ((match = filePattern.exec(errorOutput)) !== null) {
       const filePath = match[1];
-      // Filter out paths that look like npm packages
       if (!filePath.includes("node_modules")) {
         mentionedFiles.add(filePath);
       }
     }
 
-    // Read each mentioned file
     for (const relPath of mentionedFiles) {
+      if (totalSize >= this.MAX_CONTEXT_SIZE) break;
       const fullPath = path.join(projectPath, relPath);
       const content = await this.fileUtils.readFile(fullPath);
-      if (content && !files.has(relPath)) {
-        files.set(relPath, content);
+      if (content) {
+        addFile(relPath, content);
       }
     }
 
-    this.logger.debug(`Gathered ${files.size} context files for AI analysis`);
+    this.logger.debug(
+      `Gathered ${files.size} context files (${totalSize} chars) for AI analysis`,
+    );
     return files;
   }
 

@@ -79,8 +79,12 @@ class ProgressPanel {
         }
     }
     // ── Update progress (called by WorkflowEngine) ────────────────────────────
+    MAX_MESSAGES = 500;
     update(update) {
         this._messages.push(update);
+        if (this._messages.length > this.MAX_MESSAGES) {
+            this._messages.splice(0, this._messages.length - this.MAX_MESSAGES);
+        }
         this._postUpdate(update);
     }
     // ── Reset for a new deployment ─────────────────────────────────────────────

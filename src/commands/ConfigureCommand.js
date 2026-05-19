@@ -35,8 +35,8 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ConfigureCommand = void 0;
 const vscode = __importStar(require("vscode"));
-const ShellUtils_js_1 = require("../utils/ShellUtils.js");
-const AIManager_js_1 = require("../ai/AIManager.js");
+const ShellUtils_1 = require("../utils/ShellUtils");
+const AIManager_1 = require("../ai/AIManager");
 const OLLAMA_DOWNLOAD_URL = "https://ollama.com/download";
 class ConfigureCommand {
     configManager;
@@ -45,7 +45,7 @@ class ConfigureCommand {
     constructor(configManager, secretManager) {
         this.configManager = configManager;
         this.secretManager = secretManager;
-        this.shell = new ShellUtils_js_1.ShellUtils();
+        this.shell = new ShellUtils_1.ShellUtils();
     }
     async execute() {
         const choice = await vscode.window.showQuickPick([
@@ -95,13 +95,13 @@ class ConfigureCommand {
         else {
             await this.configureCloudProvider(provider, config);
         }
-        const aiManager = new AIManager_js_1.AIManager(this.configManager, this.secretManager);
+        const aiManager = new AIManager_1.AIManager(this.configManager, this.secretManager);
         aiManager.resetProvider();
         vscode.window.showInformationMessage(`🤖 AI provider switched to ${provider}`, "Test Connection").then(async (action) => {
             if (action === "Test Connection") {
                 await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Testing ${provider} connection...` }, async () => {
                     try {
-                        const testManager = new AIManager_js_1.AIManager(this.configManager, this.secretManager);
+                        const testManager = new AIManager_1.AIManager(this.configManager, this.secretManager);
                         const available = await testManager["getProvider"]()
                             .then((p) => p.isAvailable())
                             .catch(() => false);
@@ -188,7 +188,13 @@ class ConfigureCommand {
         const key = await vscode.window.showInputBox({
             prompt: `Enter your ${provider} API key`,
             password: true,
-            placeHolder: existingKey ? "Leave empty to keep existing key" : "sk-...",
+            placeHolder: existingKey
+                ? "Leave empty to keep existing key"
+                : provider === "openai"
+                    ? "sk-..."
+                    : provider === "anthropic"
+                        ? "sk-ant-..."
+                        : "AIza...",
             ignoreFocusOut: true,
         });
         if (key) {

@@ -32,6 +32,7 @@ export interface CommandOptions {
   cwd?: string; // Which folder to run the command in
   env?: Record<string, string>; // Extra environment variables
   timeout?: number; // How long to wait (milliseconds) before giving up
+  maxBuffer?: number; // Max bytes to accumulate from stdout/stderr (default 10MB)
   onOutput?: (line: string) => void; // Callback for each line of output
 }
 
@@ -65,7 +66,7 @@ export class ShellUtils {
         shell: "/bin/bash",
         env: this.bashEnv(options.env),
         timeout: options.timeout || 300000,
-        maxBuffer: 1024 * 1024 * 10,
+        maxBuffer: options.maxBuffer || 1024 * 1024 * 10,
       });
 
       this.logger.debug(`Command succeeded: ${command}`);
@@ -113,6 +114,8 @@ export class ShellUtils {
       `Running streaming command: ${command} ${args.join(" ")}`,
     );
 
+    const maxBuffer = options.maxBuffer || 1024 * 1024 * 10; // default 10MB
+
     // `spawn` starts a process and gives us streams to read from
     // We separate the command from its arguments for safety
     // (prevents shell injection attacks)
@@ -125,13 +128,32 @@ export class ShellUtils {
     // Collect all output
     let stdout = "";
     let stderr = "";
+    let killed = false;
+
+    const killProcess = (): void => {
+      if (killed) return;
+      killed = true;
+      process_child.kill("SIGTERM");
+      setTimeout(() => {
+        try { process_child.kill("SIGKILL"); } catch { /* ok */ }
+      }, 2000);
+    };
 
     // `stdout` is a "stream" — data comes out piece by piece
     // We listen for 'data' events, convert to string, and collect
     process_child.stdout?.on("data", (data: Buffer) => {
+      if (killed) return;
       // Buffer is raw bytes — `.toString()` converts to text
       const text = data.toString();
       stdout += text;
+
+      if (stdout.length > maxBuffer || stderr.length > maxBuffer) {
+        this.logger.warn(
+          `Output exceeded ${maxBuffer} bytes, killing process: ${command}`,
+        );
+        killProcess();
+        return;
+      }
 
       // Split into lines and report each one
       // This lets the caller show progress line by line
@@ -144,8 +166,17 @@ export class ShellUtils {
 
     // Same but for error output (stderr)
     process_child.stderr?.on("data", (data: Buffer) => {
+      if (killed) return;
       const text = data.toString();
       stderr += text;
+
+      if (stdout.length > maxBuffer || stderr.length > maxBuffer) {
+        this.logger.warn(
+          `Output exceeded ${maxBuffer} bytes, killing process: ${command}`,
+        );
+        killProcess();
+        return;
+      }
 
       const lines = text.split("\n").filter((l) => l.trim());
       lines.forEach((line) => {
@@ -171,9 +202,11 @@ export class ShellUtils {
 
     return {
       stdout: stdout.trim(),
-      stderr: stderr.trim(),
-      exitCode,
-      success: exitCode === 0,
+      stderr: killed
+        ? `Command output exceeded ${maxBuffer} bytes and was terminated.\n${stderr.trim()}`
+        : stderr.trim(),
+      exitCode: killed ? 1 : exitCode,
+      success: !killed && exitCode === 0,
     };
   }
 

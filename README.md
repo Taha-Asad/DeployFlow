@@ -270,26 +270,65 @@ If build fails:
 2. Use `root` user if necessary
 3. Consider SSH key auth instead of password
 
-## Testing
+## Development
 
-The extension includes comprehensive unit and integration tests. To run them:
+### Setup
+
+```bash
+# Install dependencies
+npm install
+
+# Compile TypeScript (one-time)
+npm run compile
+
+# Watch mode (auto-recompiles on changes)
+npm run watch
+```
+
+### Running the Extension
+
+1. Run `npm install` to install all dependencies
+2. Run `npm run compile` to build the extension
+3. Press **F5** in VS Code to launch a new Extension Development Host window
+4. The extension will be loaded and active in the new window
+5. Open a project folder and run `DeployFlow: Deploy Project` from the Command Palette
+
+For a faster development loop, use `npm run watch` in a terminal before pressing F5 - this will auto-recompile TypeScript files as you edit them.
+
+### Testing
 
 ```bash
 # Compile TypeScript
-npm run compile
+npm run compile-tests
 
 # Run tests
 npm run test
-
-# Watch mode (auto-recompile & test)
-npm run watch
 ```
 
 Test files are located in `src/test/`:
 - `DeployWizard.test.ts` — UI wizard functionality
 - `ConfigManager.test.ts` — Configuration management
 - `DeployCommand.test.ts` — Deploy command execution
-- `WorkflowEngine.test.ts` — Deployment workflow
+- `extension.test.ts` — Extension entry-point tests
+
+### Linting & Formatting
+
+```bash
+# Lint
+npm run lint
+
+# Format code
+npm run format
+```
+
+### Packaging
+
+```bash
+# Create production bundle
+npm run package
+```
+
+This generates the extension bundle in `dist/`, ready for VS Code Marketplace publishing.
 
 ## Contributing
 

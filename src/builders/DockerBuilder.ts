@@ -31,24 +31,34 @@ export class DockerBuilder {
     this.logger = Logger.getInstance();
   }
 
-  // ── Resolve docker binary (handles Flatpak sandbox) ───────────────────
+  // ── Resolve docker binary AND check daemon is running ─────────────────
   // VS Code installed via Flatpak can't see host /usr/bin/docker directly.
   // We try normal detection first, then fall back to flatpak-spawn --host.
   private async resolveDocker(): Promise<boolean> {
     const exists = await this.shell.commandExists("docker");
-    if (exists) return true;
-
-    if (process.env.FLATPAK_ID || process.env.container === "flatpak") {
-      const hostCheck = await this.shell.run(
-        "flatpak-spawn --host which docker",
-      );
-      if (hostCheck.success) {
-        this.dockerCmd = "flatpak-spawn --host docker";
-        return true;
+    if (!exists) {
+      if (process.env.FLATPAK_ID || process.env.container === "flatpak") {
+        const hostCheck = await this.shell.run(
+          "flatpak-spawn --host which docker",
+        );
+        if (hostCheck.success) {
+          this.dockerCmd = "flatpak-spawn --host docker";
+        } else {
+          return false;
+        }
+      } else {
+        return false;
       }
     }
 
-    return false;
+    // Verify the Docker daemon is actually running
+    const infoResult = await this.dockerRun("info >/dev/null 2>&1 && echo ok || echo fail");
+    if (!infoResult.success || infoResult.stdout.trim() !== "ok") {
+      this.logger.error("Docker daemon is not running");
+      return false;
+    }
+
+    return true;
   }
 
   private async dockerRun(
@@ -74,11 +84,14 @@ export class DockerBuilder {
   ): Promise<DockerBuildResult> {
     const dockerOk = await this.resolveDocker();
     if (!dockerOk) {
+      const dockerBinaryExists = await this.shell.commandExists("docker");
+      const errorMsg = dockerBinaryExists
+        ? "Docker is installed but the Docker daemon is not running. Start it with: sudo systemctl start docker"
+        : "Docker is not installed. Install Docker Desktop: https://docker.com";
       return {
         success: false,
         imageName: "",
-        error:
-          "Docker is not installed. Install Docker Desktop: https://docker.com",
+        error: errorMsg,
       };
     }
 

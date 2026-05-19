@@ -65,8 +65,13 @@ export class ProgressPanel implements vscode.WebviewViewProvider {
   }
 
   // ── Update progress (called by WorkflowEngine) ────────────────────────────
+  private readonly MAX_MESSAGES = 500;
+
   public update(update: ProgressUpdate): void {
     this._messages.push(update);
+    if (this._messages.length > this.MAX_MESSAGES) {
+      this._messages.splice(0, this._messages.length - this.MAX_MESSAGES);
+    }
     this._postUpdate(update);
   }
 

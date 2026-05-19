@@ -208,7 +208,7 @@ export class BuildManager {
   // e.g., 65000 → "1m 5s"
   private formatDuration(ms: number): string {
     const seconds = Math.floor(ms / 1000);
-    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 60) {return `${seconds}s`;}
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
     return `${minutes}m ${remainingSeconds}s`;

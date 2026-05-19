@@ -1,77 +1,65 @@
-# Change Log
+# Changelog
 
-All notable changes to the "deployflow-ai" extension will be documented in this file.
+All notable changes to the **DeployFlow AI** extension will be documented in this file.
 
-Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [1.0.0] - 2026-05-18
 
 ### Added
-- **🚀 One-Click Deployment** to 7+ cloud platforms (VPS, Vercel, Netlify, Cloudflare, AWS ECS, Google Cloud Run, Azure)
-- **🤖 AI-Powered Intelligence** for automatic Dockerfile generation, build error detection and fixing
-- **🔒 Enterprise Security** with encrypted credential storage in VS Code vault
-- **📊 Deployment Monitoring** with live progress tracking and logs
-- **3-Step Interactive Wizard** for quick configuration and deployment
-- **Multi-cloud Support:**
-  - VPS / SSH — Deploy to any Linux server
-  - Vercel — Frontend & serverless functions
-  - Netlify — Static sites & edge functions
-  - Cloudflare — Pages & workers
-  - AWS ECS — Container-based deployments
-  - Google Cloud Run — Serverless containers
-  - Azure Container Apps — Managed containers
-- **Project Analysis** — Automatic detection of framework, dependencies, ports
-- **Automatic Dockerfile Generation** with multi-stage builds and security best practices
-- **Smart Error Recovery** — AI automatically attempts to fix build failures
-- **Deployment Rollback** — Restore previous versions if needed
-- **Optional Features:**
-  - Trivy security scanning for Docker images
-  - Prometheus/Grafana monitoring configuration
-  - Kubernetes manifest generation
-- **Commands:**
-  - `DeployFlow: Deploy Project` — Start deployment
-  - `DeployFlow: Analyze Project` — Analyze without deploying
-  - `DeployFlow: Generate SDLC Docs` — Create documentation
-  - `DeployFlow: Rollback Deployment` — Restore previous version
-  - `DeployFlow: Configure DeployFlow` — Settings
-  - `DeployFlow: Show Deploy Progress` — View deployment status
+
+- **One-Click Deployment** to 7+ cloud platforms (VPS/SSH, Vercel, Netlify, Cloudflare, AWS ECS, Google Cloud Run, Azure)
+- **AI-Powered Intelligence** — automatic Dockerfile generation, build error detection, and smart error recovery with configurable retry attempts
+- **Project Analysis** — automatic detection of framework, language, package manager, dependencies, port, and monorepo structure
+- **Multi-Cloud Deployers:**
+  - VPS/SSH — full implementation with Docker auto-install, nginx setup, Let's Encrypt SSL, systemd service, and firewall configuration
+  - Vercel — CLI-based deployment with URL output parsing
+  - AWS ECS — ECR push and ECS service update with deployment stabilization
+  - Netlify, Cloudflare, GCP, Azure — foundation stubs ready for extension
+- **3-Step Interactive Setup Wizard** — webview-based UI for target selection, credential entry, and deployment review
+- **SDLC Documentation Generation** — AI-generated BRD, SRS, API docs, and Architecture documents
+- **Deployment Rollback** — restore previous deployment snapshots
+- **Real-Time Progress Panel** — sidebar webview showing live deployment status
 - **Configurable Settings:**
-  - AI provider selection (Ollama, OpenAI, Anthropic, Gemini)
-  - Default deployment target
-  - Max error fix attempts
-  - Log level control
-- **Comprehensive Logging** with Output channel integration
-- **Secure Credential Storage** using VS Code's encrypted vault
-- **Real-time Progress Updates** in sidebar panel
+  - AI provider: Ollama (default/local), OpenAI, Anthropic, Gemini
+  - Default deployment target, max fix attempts, log level
+  - Optional features: Trivy vulnerability scanning, Prometheus/Grafana monitoring, Kubernetes manifests
+- **6 VS Code Commands** — Deploy, Analyze, Generate Docs, Rollback, Configure, Show Progress
+- **Enterprise Security** — encrypted credential storage via VS Code SecretStorage
+- **Comprehensive Logging** — dedicated Output channel with configurable verbosity
+- **Local AI-First** — Ollama as default provider, no API key required, auto-pulls models
 
 ### Fixed
-- **UI Wizard Navigation** — Fixed JavaScript event listener issues preventing step transitions
-- **Error Handling** — Added proper null checks and error logging in wizard
-- **Element Binding** — Ensured all DOM elements are properly initialized before event binding
-- **Credential Collection** — Improved null safety in credential gathering
-- **Step Transitions** — Fixed goStep() function to properly validate element existence
 
-### Tested
-- Unit tests for DeployWizard UI component
-- Unit tests for ConfigManager configuration handling
-- Unit tests for DeployCommand execution flow
-- Unit tests for WorkflowEngine deployment workflow
-- Integration tests for complete deployment process
-- Cross-platform compatibility (Windows, macOS, Linux)
+- **UI Wizard Navigation** — resolved JavaScript event listener issues preventing step transitions
+- **Element Binding** — ensured all DOM elements are properly initialized before attaching listeners
+- **Null Safety** — added proper null checks and error logging throughout the wizard
+- **Credential Collection** — improved null safety in credential gathering flow
+- **Step Transitions** — fixed `goStep()` function to properly validate element existence before access
 
 ### Changed
-- Complete rewrite of DeployWizard JavaScript for better error handling
-- Enhanced UI responsiveness with better event listener management
-- Improved credential validation before deployment
-- Better error messages for troubleshooting
+
+- Complete rewrite of DeployWizard JavaScript for robust error handling
+- Enhanced UI responsiveness with improved event listener management
+- Better credential validation before deployment submission
+- Improved error messages across the extension for easier troubleshooting
+
+### Tested
+
+- Unit tests for DeployWizard, ConfigManager, DeployCommand, WorkflowEngine
+- Integration tests covering the complete deployment pipeline
+- Cross-platform compatibility (Windows, macOS, Linux)
 
 ## [Unreleased]
 
-- GitHub Actions CI/CD integration
-- GitLab CI/CD integration
-- Terraform code generation
+### Planned
+
+- GitHub Actions CI/CD pipeline generation
+- GitLab CI/CD pipeline generation
+- Terraform infrastructure-as-code generation
 - Docker Compose multi-container support
 - Helm chart generation for Kubernetes
-- Auto-scaling configuration
+- Auto-scaling configuration templates
 - Database backup automation
-- Cost estimation & optimization
+- Cost estimation and optimization

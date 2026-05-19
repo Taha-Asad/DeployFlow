@@ -201,7 +201,13 @@ export class ConfigureCommand {
     const key = await vscode.window.showInputBox({
       prompt: `Enter your ${provider} API key`,
       password: true,
-      placeHolder: existingKey ? "Leave empty to keep existing key" : "sk-...",
+      placeHolder: existingKey
+        ? "Leave empty to keep existing key"
+        : provider === "openai"
+          ? "sk-..."
+          : provider === "anthropic"
+            ? "sk-ant-..."
+            : "AIza...",
       ignoreFocusOut: true,
     });
 

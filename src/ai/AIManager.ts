@@ -67,11 +67,8 @@ export class AIManager {
 
   // ── Get the active AI provider ────────────────────────────────────────
   // Creates the right provider based on user settings
+  // Does NOT cache — re-reads settings each call so config changes take effect immediately
   private async getProvider(): Promise<AIProvider> {
-    if (this.cachedProvider) {
-      return this.cachedProvider;
-    }
-
     const providerName = this.configManager.getAiProvider();
     this.logger.info(`Using AI provider: ${providerName}`);
 
@@ -79,7 +76,7 @@ export class AIManager {
       case "openai": {
         const key = await this.secretManager.getAiKey("openai");
         if (!key) {
-          this.logger.warn("OpenAI key missing — falling back to Ollama");
+          this.warnFallback("OpenAI", "No API key configured");
           return this.fallbackToOllama();
         }
         this.cachedProvider = new OpenAIProvider(key);
@@ -89,7 +86,7 @@ export class AIManager {
       case "anthropic": {
         const key = await this.secretManager.getAiKey("anthropic");
         if (!key) {
-          this.logger.warn("Anthropic key missing — falling back to Ollama");
+          this.warnFallback("Anthropic", "No API key configured");
           return this.fallbackToOllama();
         }
         this.cachedProvider = new AnthropicProvider(key);
@@ -99,7 +96,7 @@ export class AIManager {
       case "gemini": {
         const key = await this.secretManager.getAiKey("gemini");
         if (!key) {
-          this.logger.warn("Gemini key missing — falling back to Ollama");
+          this.warnFallback("Gemini", "No API key configured");
           return this.fallbackToOllama();
         }
         this.cachedProvider = new GeminiProvider(key);
@@ -111,12 +108,11 @@ export class AIManager {
         const url = this.configManager.getOllamaUrl();
         const model = this.configManager.getOllamaModel();
         const ollamaProvider = new OllamaProvider(url, model);
-        this.cachedProvider = ollamaProvider;
 
         // Check if Ollama is running
         const ollamaRunning = await ollamaProvider.isAvailable();
         if (!ollamaRunning) {
-          this.logger.warn(`Ollama unavailable — falling back`);
+          this.warnFallback("Ollama", `Not reachable at ${url}`);
           return this.fallbackToOllama();
         }
 
@@ -140,26 +136,36 @@ export class AIManager {
           );
 
           if (!pulled) {
-            this.logger.warn(
-              `Failed to pull model "${model}". Falling back.`,
-            );
+            this.warnFallback("Ollama", `Failed to pull model "${model}"`);
             return this.fallbackToOllama();
           }
 
           this.logger.info(`Model "${model}" pulled successfully.`);
         }
 
+        this.cachedProvider = ollamaProvider;
         return ollamaProvider;
       }
     }
 
     const available = await this.cachedProvider!.isAvailable();
     if (!available) {
-      this.logger.warn(`${providerName} unavailable — falling back to Ollama`);
+      this.warnFallback(providerName, "Provider is not reachable");
       return this.fallbackToOllama();
     }
 
     return this.cachedProvider!;
+  }
+
+  // ── Show user-visible warning when falling back ─────────────────────
+  private warnFallback(provider: string, reason: string): void {
+    const msg = `⚠️ ${provider} unavailable (${reason}). Falling back to Ollama — check your settings.`;
+    this.logger.warn(msg);
+    vscode.window.showWarningMessage(msg, "Configure AI").then((action) => {
+      if (action === "Configure AI") {
+        vscode.commands.executeCommand("deployflow.configure");
+      }
+    });
   }
 
   private async fallbackToOllama(): Promise<AIProvider> {
@@ -234,28 +240,29 @@ export class AIManager {
   }
 
   // ── Build the prompt we send to the AI ───────────────────────────────
+  private readonly MAX_PROMPT_SIZE = 100_000; // characters
+
   private buildFixPrompt(
     errorOutput: string,
     projectFiles: Map<string, string>,
   ): string {
-    // Build a summary of relevant files
+    const MAX_ERROR_LENGTH = 15_000;
+    const truncatedError =
+      errorOutput.length > MAX_ERROR_LENGTH
+        ? errorOutput.slice(0, MAX_ERROR_LENGTH) +
+          `\n\n[...truncated, was ${errorOutput.length} chars]`
+        : errorOutput;
+
     let filesContext = "";
     for (const [filePath, content] of projectFiles) {
-      // Don't include files that are too large (> 10KB)
-      if (content.length > 10000) {
-        filesContext += `\n### File: ${filePath}\n[File too large to include, ${content.length} chars]\n`;
-        continue;
-      }
       filesContext += `\n### File: ${filePath}\n\`\`\`\n${content}\n\`\`\`\n`;
     }
 
-    // This is the prompt we send to the AI
-    // We're very specific about the format we want back
-    return `You are an expert software engineer helping to fix a build error.
+    const prompt = `You are an expert software engineer helping to fix a build error.
 
 ## Build Error Output:
 \`\`\`
-${errorOutput}
+${truncatedError}
 \`\`\`
 
 ## Project Files:
@@ -287,6 +294,16 @@ Rules:
 - Keep changes minimal — don't refactor unrelated code
 - If you're not sure, set confidence to a low number (< 50)
 - The filePath must be a relative path from the project root`;
+
+    if (prompt.length > this.MAX_PROMPT_SIZE) {
+      const truncated = prompt.slice(0, this.MAX_PROMPT_SIZE);
+      this.logger.warn(
+        `Prompt too large (${prompt.length} chars), truncating to ${this.MAX_PROMPT_SIZE}`,
+      );
+      return truncated;
+    }
+
+    return prompt;
   }
 
   // ── Parse the AI's response ───────────────────────────────────────────
@@ -343,11 +360,18 @@ Rules:
 
   // ── Build prompt for deployment error fixing ──────────────────────────
   private buildDeployFixPrompt(errorOutput: string): string {
-    return `You are a DevOps engineer helping to fix a remote server deployment error.
+    const MAX_ERROR_LENGTH = 15_000;
+    const truncatedError =
+      errorOutput.length > MAX_ERROR_LENGTH
+        ? errorOutput.slice(0, MAX_ERROR_LENGTH) +
+          `\n\n[...truncated, was ${errorOutput.length} chars]`
+        : errorOutput;
+
+    const prompt = `You are a DevOps engineer helping to fix a remote server deployment error.
 
 ## Deployment Error Output:
 \`\`\`
-${errorOutput}
+${truncatedError}
 \`\`\`
 
 ## Instructions:
@@ -377,6 +401,16 @@ Rules:
 - If the command must be run as root, set requiresSudo to true
 - If you're not sure, set confidence to a low number (< 50)
 - Keep commands simple and focused — one task per command`;
+
+    if (prompt.length > this.MAX_PROMPT_SIZE) {
+      const truncated = prompt.slice(0, this.MAX_PROMPT_SIZE);
+      this.logger.warn(
+        `Deploy fix prompt too large (${prompt.length} chars), truncating to ${this.MAX_PROMPT_SIZE}`,
+      );
+      return truncated;
+    }
+
+    return prompt;
   }
 
   // ── Parse AI response for deploy fix ──────────────────────────────────
