@@ -41,6 +41,7 @@ exports.FileUtils = void 0;
 // `fs` is Node.js built-in file system module
 // We use `fs/promises` which gives us async versions of all file functions
 const fs = __importStar(require("fs/promises"));
+const fsSync = __importStar(require("fs"));
 // `path` is built-in for working with file paths
 // It handles differences between Windows (\) and Linux/Mac (/) paths
 const path = __importStar(require("path"));
@@ -50,18 +51,66 @@ class FileUtils {
     constructor() {
         this.logger = Logger_1.Logger.getInstance();
     }
-    // ── Read a file as text ───────────────────────────────────────────────
+    // ── Read a file as text (with size limit) ─────────────────────────────
     // Returns the file contents or null if the file doesn't exist
-    async readFile(filePath) {
+    // maxSize: maximum bytes to read (default 1MB) — prevents OOM on large files
+    async readFile(filePath, maxSize = 1024 * 1024) {
         try {
-            // `fs.readFile` reads the whole file
-            // 'utf-8' means treat it as text (not binary data)
+            const stat = await fs.stat(filePath);
+            if (stat.size > maxSize) {
+                this.logger.warn(`File ${filePath} is ${stat.size} bytes, truncating to ${maxSize} bytes`);
+                const fd = await fs.open(filePath, "r");
+                const buffer = Buffer.alloc(maxSize);
+                await fd.read(buffer, 0, maxSize, 0);
+                await fd.close();
+                const lastNewline = buffer.lastIndexOf("\n");
+                const end = lastNewline > 0 ? lastNewline : buffer.length;
+                return buffer.toString("utf-8", 0, end) +
+                    `\n\n[...truncated, was ${stat.size} bytes, showing first ${maxSize}]`;
+            }
             return await fs.readFile(filePath, "utf-8");
         }
         catch {
-            // File probably doesn't exist — return null instead of crashing
             return null;
         }
+    }
+    // ── Read a file and process line by line (streaming) ─────────────────
+    // Processes lines one at a time without loading the entire file into memory
+    async readFileLines(filePath, onLine, maxLines) {
+        return new Promise((resolve, reject) => {
+            const stream = fsSync.createReadStream(filePath, { encoding: "utf-8" });
+            let remaining = "";
+            let lineCount = 0;
+            stream.on("data", (chunk) => {
+                const text = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+                const lines = (remaining + text).split("\n");
+                remaining = lines.pop() || "";
+                for (const line of lines) {
+                    onLine(line);
+                    lineCount++;
+                    if (maxLines && lineCount >= maxLines) {
+                        stream.destroy();
+                        resolve(lineCount);
+                        return;
+                    }
+                }
+            });
+            stream.on("end", () => {
+                if (remaining) {
+                    onLine(remaining);
+                    lineCount++;
+                }
+                resolve(lineCount);
+            });
+            stream.on("error", (err) => {
+                if (err.code === "ENOENT") {
+                    resolve(0);
+                }
+                else {
+                    reject(err);
+                }
+            });
+        });
     }
     // ── Read a file and parse it as JSON ─────────────────────────────────
     // Returns the parsed object or null
@@ -148,9 +197,10 @@ class FileUtils {
             currentDir = parentDir;
         }
     }
-    // ── Get all files recursively ─────────────────────────────────────────
+    // ── Get all files recursively (with max limit) ────────────────────────
     // Returns all files in a folder AND all subfolders
     // Skips common folders we don't want (node_modules, .git, etc.)
+    // maxFiles: stops walking once this many files are found (default 5000)
     async getFilesRecursive(dirPath, ignore = [
         "node_modules",
         ".git",
@@ -158,30 +208,28 @@ class FileUtils {
         "build",
         "__pycache__",
         ".venv",
-    ]) {
+    ], maxFiles = 5000) {
         const results = [];
-        // Inner function that calls itself (recursion)
         const walk = async (dir) => {
+            if (results.length >= maxFiles)
+                return;
             let entries;
             try {
-                // `withFileTypes: true` gives us info about each entry
-                // (whether it's a file or folder)
                 entries = await fs.readdir(dir, { withFileTypes: true });
             }
             catch {
-                return; // Can't read this folder, skip it
+                return;
             }
             for (const entry of entries) {
-                // Skip ignored folders
+                if (results.length >= maxFiles)
+                    break;
                 if (ignore.includes(entry.name))
                     continue;
                 const fullPath = path.join(dir, entry.name);
                 if (entry.isDirectory()) {
-                    // It's a folder — go inside it (recursion)
                     await walk(fullPath);
                 }
                 else if (entry.isFile()) {
-                    // It's a file — add to results
                     results.push(fullPath);
                 }
             }

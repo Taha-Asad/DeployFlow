@@ -53,6 +53,12 @@ const CiCdGenerator_1 = require("../generators/CiCdGenerator");
 const KubernetesGenerator_1 = require("../generators/KubernetesGenerator");
 const MonitoringGenerator_1 = require("../generators/MonitoringGenerator");
 const SshDeployer_1 = require("../deployers/SshDeployer");
+const Verceldeployer_1 = require("../deployers/Verceldeployer");
+const Netlifydeployer_1 = require("../deployers/Netlifydeployer");
+const Cloudflaredeployer_1 = require("../deployers/Cloudflaredeployer");
+const Awsdeployer_1 = require("../deployers/Awsdeployer");
+const Gcpdeployer_1 = require("../deployers/Gcpdeployer");
+const Azuredeployer_1 = require("../deployers/Azuredeployer");
 const TrivyScanner_1 = require("../security/TrivyScanner");
 const Diffviewer_1 = require("../ui/Diffviewer");
 // Each step in our pipeline
@@ -86,6 +92,12 @@ class WorkflowEngine {
     monitoringGenerator;
     // Deployers & Scanners
     sshDeployer;
+    vercelDeployer;
+    netlifyDeployer;
+    cloudflareDeployer;
+    awsDeployer;
+    gcpDeployer;
+    azureDeployer;
     trivyScanner;
     // UI components (set before each run)
     progressPanel = null;
@@ -108,6 +120,12 @@ class WorkflowEngine {
         this.kubernetesGenerator = new KubernetesGenerator_1.KubernetesGenerator();
         this.monitoringGenerator = new MonitoringGenerator_1.MonitoringGenerator();
         this.sshDeployer = new SshDeployer_1.SshDeployer();
+        this.vercelDeployer = new Verceldeployer_1.VercelDeployer();
+        this.netlifyDeployer = new Netlifydeployer_1.NetlifyDeployer();
+        this.cloudflareDeployer = new Cloudflaredeployer_1.CloudflareDeployer();
+        this.awsDeployer = new Awsdeployer_1.AwsDeployer();
+        this.gcpDeployer = new Gcpdeployer_1.GcpDeployer();
+        this.azureDeployer = new Azuredeployer_1.AzureDeployer();
         this.trivyScanner = new TrivyScanner_1.TrivyScanner();
     }
     // ── MAIN ENTRY POINT ──────────────────────────────────────────────────
@@ -151,7 +169,8 @@ class WorkflowEngine {
             // Build the app and Docker image (with AI-powered error fixing)
             // ════════════════════════════════════════════════════════════
             this.report(WorkflowStep.BUILD, "🔨 Building project...");
-            const buildResult = await this.buildWithAiFix(projectInfo);
+            const needsDocker = deployConfig.target === "vps";
+            const buildResult = await this.buildWithAiFix(projectInfo, needsDocker);
             if (!buildResult.success) {
                 return {
                     success: false,
@@ -180,7 +199,7 @@ class WorkflowEngine {
             // STEP 4: SECURITY SCAN
             // Scan Docker image for vulnerabilities using Trivy
             // ════════════════════════════════════════════════════════════
-            if (this.configManager.isTrivyScanEnabled()) {
+            if (needsDocker && this.configManager.isTrivyScanEnabled()) {
                 this.report(WorkflowStep.SCAN, "🔒 Scanning for vulnerabilities...");
                 const scanResult = await this.trivyScanner.scan(`${projectInfo.name}:latest`, (msg) => this.report(WorkflowStep.SCAN, msg));
                 if (scanResult.criticalCount > 0) {
@@ -207,55 +226,77 @@ class WorkflowEngine {
             // ════════════════════════════════════════════════════════════
             this.report(WorkflowStep.DEPLOY, `🚀 Deploying to ${deployConfig.target}...`);
             let deployedUrl;
-            switch (deployConfig.target) {
-                case "vps": {
-                    if (!tarPath) {
-                        throw new Error("No tar file for VPS deployment");
+            const rawCredentials = await this.secretManager.getCredentialsForTarget(deployConfig.target);
+            if (!rawCredentials) {
+                return {
+                    success: false,
+                    projectInfo,
+                    error: `Credentials not configured for ${deployConfig.target}. Run Configure DeployFlow first.`,
+                    stepsCompleted,
+                };
+            }
+            const runDeployForTarget = async () => {
+                switch (deployConfig.target) {
+                    case "vps": {
+                        if (!tarPath) {
+                            throw new Error("No tar file for VPS deployment");
+                        }
+                        const tarExists = await this.fileUtils.exists(tarPath);
+                        if (!tarExists) {
+                            throw new Error(`Docker image tar file not found at ${tarPath}. ` +
+                                "The image export may have failed or the file was cleaned from temporary storage. Try rebuilding.");
+                        }
+                        return await this.sshDeployer.deploy(projectInfo, deployConfig, rawCredentials, tarPath, (msg) => this.report(WorkflowStep.DEPLOY, msg));
                     }
-                    const tarExists = await this.fileUtils.exists(tarPath);
-                    if (!tarExists) {
-                        throw new Error(`Docker image tar file not found at ${tarPath}. ` +
-                            "The image export may have failed or the file was cleaned from temporary storage. Try rebuilding.");
+                    case "vercel":
+                        return await this.vercelDeployer.deploy(projectInfo, deployConfig, rawCredentials, (msg) => this.report(WorkflowStep.DEPLOY, msg));
+                    case "netlify":
+                        return await this.netlifyDeployer.deploy(projectInfo, deployConfig, rawCredentials, (msg) => this.report(WorkflowStep.DEPLOY, msg));
+                    case "cloudflare":
+                        return await this.cloudflareDeployer.deploy(projectInfo, deployConfig, rawCredentials, (msg) => this.report(WorkflowStep.DEPLOY, msg));
+                    case "aws":
+                        return await this.awsDeployer.deploy(projectInfo, deployConfig, rawCredentials, (msg) => this.report(WorkflowStep.DEPLOY, msg));
+                    case "gcp":
+                        return await this.gcpDeployer.deploy(projectInfo, deployConfig, rawCredentials, (msg) => this.report(WorkflowStep.DEPLOY, msg));
+                    case "azure":
+                        return await this.azureDeployer.deploy(projectInfo, deployConfig, rawCredentials, (msg) => this.report(WorkflowStep.DEPLOY, msg));
+                    default:
+                        throw new Error(`Unknown deploy target: ${deployConfig.target}`);
+                }
+            };
+            let deployResult = await runDeployForTarget();
+            if (!deployResult.success) {
+                this.report(WorkflowStep.DEPLOY, `❌ Deployment failed. Engaging AI deploy fixer...`);
+                const remoteRunner = deployConfig.target === "vps"
+                    ? async (command) => {
+                        return this.sshDeployer.runRemoteCommand(rawCredentials, command);
                     }
-                    const sshCreds = await this.secretManager.getSshCredentials();
-                    if (!sshCreds) {
+                    : undefined;
+                if (remoteRunner) {
+                    const wrappedDeploy = async () => {
+                        const result = await runDeployForTarget();
+                        return { success: result.success, error: result.error || "Unknown deploy error" };
+                    };
+                    const fixResult = await this.errorFixer.fixDeployErrors(deployResult.error || "Unknown deploy error", remoteRunner, wrappedDeploy, (msg) => this.report(WorkflowStep.DEPLOY, msg));
+                    if (!fixResult.success) {
                         return {
                             success: false,
                             projectInfo,
-                            error: "SSH credentials not configured. Run Configure DeployFlow first.",
+                            error: `Deployment failed: ${fixResult.finalError}`,
                             stepsCompleted,
                         };
                     }
-                    const runDeploy = async () => {
-                        const result = await this.sshDeployer.deploy(projectInfo, deployConfig, sshCreds, tarPath, (msg) => this.report(WorkflowStep.DEPLOY, msg));
-                        if (result.success) {
-                            deployedUrl = result.url;
-                            return { success: true, error: "" };
-                        }
-                        return { success: false, error: result.error || "Unknown deploy error" };
-                    };
-                    let deployResult = await runDeploy();
-                    if (!deployResult.success) {
-                        this.report(WorkflowStep.DEPLOY, `❌ Deployment failed. Engaging AI deploy fixer...`);
-                        const remoteRunner = async (command) => {
-                            return this.sshDeployer.runRemoteCommand(sshCreds, command);
-                        };
-                        const fixResult = await this.errorFixer.fixDeployErrors(deployResult.error, remoteRunner, runDeploy, (msg) => this.report(WorkflowStep.DEPLOY, msg));
-                        if (!fixResult.success) {
-                            return {
-                                success: false,
-                                projectInfo,
-                                error: `Deployment failed: ${fixResult.finalError}`,
-                                stepsCompleted,
-                            };
-                        }
-                    }
-                    break;
                 }
-                default:
-                    this.report(WorkflowStep.DEPLOY, `⚠️ Target "${deployConfig.target}" not yet implemented`);
-                    break;
+                else {
+                    return {
+                        success: false,
+                        projectInfo,
+                        error: `Deployment failed: ${deployResult.error}`,
+                        stepsCompleted,
+                    };
+                }
             }
+            deployedUrl = deployResult.url;
             stepsCompleted.push(WorkflowStep.DEPLOY);
             this.report(WorkflowStep.DEPLOY, "✅ Deployed successfully", true);
             // ════════════════════════════════════════════════════════════
@@ -324,7 +365,7 @@ class WorkflowEngine {
         }
     }
     // ── Build with AI-powered error fixing loop ───────────────────────────
-    async buildWithAiFix(projectInfo) {
+    async buildWithAiFix(projectInfo, needsDocker) {
         // Define the build function we'll retry on failure
         const runBuild = async () => {
             // First build the app itself
@@ -332,7 +373,12 @@ class WorkflowEngine {
             if (!appBuild.success) {
                 return { success: false, error: appBuild.error };
             }
-            // Then build the Docker image
+            // Skip Docker build for platforms that don't need it
+            // (Vercel, Netlify, Cloudflare, AWS, GCP, Azure)
+            if (!needsDocker) {
+                return { success: true, error: "" };
+            }
+            // Then build the Docker image (only for Docker-based targets like VPS)
             const dockerBuild = await this.dockerBuilder.build(projectInfo, (msg) => this.report(WorkflowStep.BUILD, `  ${msg}`));
             if (!dockerBuild.success) {
                 return {

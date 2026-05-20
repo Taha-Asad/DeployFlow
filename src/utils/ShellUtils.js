@@ -35,12 +35,13 @@ class ShellUtils {
     async run(command, options = {}) {
         this.logger.debug(`Running command: ${command}`, { cwd: options.cwd });
         try {
+            const maxBuffer = options.maxBuffer || 1024 * 1024; // default 1MB
             const { stdout, stderr } = await execAsync(command, {
                 cwd: options.cwd,
                 shell: "/bin/bash",
                 env: this.bashEnv(options.env),
                 timeout: options.timeout || 300000,
-                maxBuffer: options.maxBuffer || 1024 * 1024 * 10,
+                maxBuffer,
             });
             this.logger.debug(`Command succeeded: ${command}`);
             return {
@@ -69,83 +70,95 @@ class ShellUtils {
     // ── Run a command AND stream its output in real-time ─────────────────
     // Good for long-running commands where you want to see progress
     // For example: `npm install` shows each package being installed
-    async runStreaming(command, args, // Command arguments as an array ['--no-cache', '-t', 'myapp']
-    options = {}) {
+    async runStreaming(command, args, options = {}) {
         this.logger.debug(`Running streaming command: ${command} ${args.join(" ")}`);
-        const maxBuffer = options.maxBuffer || 1024 * 1024 * 10; // default 10MB
-        // `spawn` starts a process and gives us streams to read from
-        // We separate the command from its arguments for safety
-        // (prevents shell injection attacks)
-        const process_child = (0, child_process_1.spawn)(command, args, {
-            cwd: options.cwd,
-            env: this.bashEnv(options.env),
-            shell: "/bin/bash",
-        });
-        // Collect all output
+        const maxBuffer = options.maxBuffer || 1024 * 1024; // default 1MB
+        // Shell-safe escaping: wrap each arg in single quotes, escape internal single quotes
+        // This prevents bash word-splitting on args with spaces (e.g. --message "Hello World")
+        const shellEscape = (s) => `'${s.replace(/'/g, "'\\''")}'`;
+        const useShell = options.useShell !== false;
+        const process_child = useShell
+            ? (() => {
+                const cmd = [command, ...args.map(shellEscape)].join(" ");
+                return (0, child_process_1.spawn)("/bin/bash", ["-c", cmd], {
+                    cwd: options.cwd,
+                    env: this.bashEnv(options.env),
+                });
+            })()
+            : (0, child_process_1.spawn)(command, args, {
+                cwd: options.cwd,
+                env: Object.assign(Object.assign({}, process.env), (options.env || {})),
+            });
+        // Always accumulate output to stderr (capped to maxBuffer), even when
+        // onOutput is provided. Callers need stderr on failure for error reporting
+        // and AI error fixing. stdout accumulation is optional and capped too.
         let stdout = "";
         let stderr = "";
+        let outputCapped = false;
         let killed = false;
+        let killTimer = null;
         const killProcess = () => {
             if (killed)
                 return;
             killed = true;
+            outputCapped = true;
             process_child.kill("SIGTERM");
-            setTimeout(() => {
+            killTimer = setTimeout(() => {
                 try {
                     process_child.kill("SIGKILL");
                 }
                 catch { /* ok */ }
             }, 2000);
         };
-        // `stdout` is a "stream" — data comes out piece by piece
-        // We listen for 'data' events, convert to string, and collect
-        process_child.stdout?.on("data", (data) => {
-            if (killed)
-                return;
-            // Buffer is raw bytes — `.toString()` converts to text
-            const text = data.toString();
-            stdout += text;
-            if (stdout.length > maxBuffer || stderr.length > maxBuffer) {
+        const appendOutput = (buf, accumulator) => {
+            if (outputCapped)
+                return accumulator;
+            const remaining = maxBuffer - accumulator.length;
+            if (buf.length >= remaining) {
+                accumulator += buf.slice(0, remaining);
+                outputCapped = true;
                 this.logger.warn(`Output exceeded ${maxBuffer} bytes, killing process: ${command}`);
                 killProcess();
-                return;
             }
-            // Split into lines and report each one
-            // This lets the caller show progress line by line
+            else {
+                accumulator += buf;
+            }
+            return accumulator;
+        };
+        const onStdoutData = (data) => {
+            if (killed)
+                return;
+            const text = data.toString();
+            stdout = appendOutput(text, stdout);
             const lines = text.split("\n").filter((l) => l.trim());
             lines.forEach((line) => {
                 this.logger.debug(`  > ${line}`);
-                options.onOutput?.(line); // Call the callback if provided
+                options.onOutput?.(line);
             });
-        });
-        // Same but for error output (stderr)
-        process_child.stderr?.on("data", (data) => {
+        };
+        const onStderrData = (data) => {
             if (killed)
                 return;
             const text = data.toString();
-            stderr += text;
-            if (stdout.length > maxBuffer || stderr.length > maxBuffer) {
-                this.logger.warn(`Output exceeded ${maxBuffer} bytes, killing process: ${command}`);
-                killProcess();
-                return;
-            }
+            stderr = appendOutput(text, stderr);
             const lines = text.split("\n").filter((l) => l.trim());
             lines.forEach((line) => {
                 this.logger.debug(`  ! ${line}`);
                 options.onOutput?.(line);
             });
-        });
-        // Wait for the process to finish
-        // We wrap it in a Promise so we can use async/await
+        };
+        process_child.stdout?.on("data", onStdoutData);
+        process_child.stderr?.on("data", onStderrData);
         const exitCode = await new Promise((resolve) => {
-            // 'close' event fires when the process is done
-            // `code` is the exit code (0 = success)
             process_child.on("close", (code) => {
+                if (killTimer)
+                    clearTimeout(killTimer);
                 resolve(code || 0);
             });
-            // Handle if the process crashes with an error
             process_child.on("error", () => {
-                resolve(1); // Treat as failure
+                if (killTimer)
+                    clearTimeout(killTimer);
+                resolve(1);
             });
         });
         return {

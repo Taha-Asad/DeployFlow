@@ -735,7 +735,7 @@ export class ProjectAnalyzer {
     if (info.language === "go") {
       info.hasTests =
         (await this.fileUtils.exists(path.join(projectPath, "main_test.go"))) ||
-        (await this.fileUtils.getFilesRecursive(projectPath)).some((f) =>
+        (await this.fileUtils.getFilesRecursive(projectPath, undefined, 100)).some((f) =>
           f.endsWith("_test.go"),
         );
 

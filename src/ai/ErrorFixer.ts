@@ -53,6 +53,18 @@ export class ErrorFixer {
   ): Promise<FixSessionResult> {
     const maxAttempts = this.configManager.getMaxFixAttempts();
 
+    // Bail early if there's no error to fix
+    if (!errorOutput || errorOutput.trim().length === 0) {
+      const msg = "⚠️ No error output to analyze. Run the build manually to see what went wrong.";
+      onProgress(msg);
+      this.logger.warn("fixBuildErrors called with empty error output");
+      return {
+        success: false,
+        totalAttempts: 0,
+        finalError: "No error output captured — build may have crashed or timed out",
+      };
+    }
+
     this.logger.info(`Starting AI fix loop (max ${maxAttempts} attempts)...`);
 
     let currentError = errorOutput;
@@ -86,6 +98,20 @@ export class ErrorFixer {
           finalError: currentError,
         };
       }
+
+      // Safety: ensure the response has the expected shape
+      if (!fixResponse || typeof fixResponse !== "object") {
+        this.logger.error("AI returned invalid response", fixResponse);
+        onProgress("❌ AI returned an invalid response");
+        return {
+          success: false,
+          totalAttempts: attempt,
+          finalError: currentError,
+        };
+      }
+      fixResponse.patches = fixResponse.patches || [];
+      fixResponse.confidence = fixResponse.confidence ?? 0;
+      fixResponse.explanation = fixResponse.explanation || "No explanation provided";
 
       this.logger.info(
         `AI confidence: ${fixResponse.confidence}% | ` +
@@ -175,6 +201,18 @@ export class ErrorFixer {
   ): Promise<FixSessionResult> {
     const maxAttempts = this.configManager.getMaxFixAttempts();
 
+    // Bail early if there's no error to fix
+    if (!errorOutput || errorOutput.trim().length === 0) {
+      const msg = "⚠️ No error output to analyze. Check the error log manually.";
+      onProgress(msg);
+      this.logger.warn("fixDeployErrors called with empty error output");
+      return {
+        success: false,
+        totalAttempts: 0,
+        finalError: "No error output captured",
+      };
+    }
+
     this.logger.info(
       `Starting AI deploy fix loop (max ${maxAttempts} attempts)...`,
     );
@@ -200,6 +238,20 @@ export class ErrorFixer {
           finalError: currentError,
         };
       }
+
+      // Safety: ensure the response has the expected shape
+      if (!fixResponse || typeof fixResponse !== "object") {
+        this.logger.error("AI returned invalid response", fixResponse);
+        onProgress("❌ AI returned an invalid response");
+        return {
+          success: false,
+          totalAttempts: attempt,
+          finalError: currentError,
+        };
+      }
+      fixResponse.remoteCommands = fixResponse.remoteCommands || [];
+      fixResponse.confidence = fixResponse.confidence ?? 0;
+      fixResponse.explanation = fixResponse.explanation || "No explanation provided";
 
       this.logger.info(
         `AI confidence: ${fixResponse.confidence}% | ` +
@@ -428,6 +480,10 @@ export class ErrorFixer {
     onProgress: (msg: string) => void,
   ): Promise<void> {
     for (const patch of patches) {
+      if (!patch || !patch.filePath || patch.newContent === undefined) {
+        this.logger.warn("Skipping invalid patch", patch);
+        continue;
+      }
       const fullPath = path.join(projectPath, patch.filePath);
 
       // Create a backup before modifying
@@ -486,6 +542,7 @@ export class ErrorFixer {
     patches: FilePatch[],
   ): Promise<void> {
     for (const patch of patches) {
+      if (!patch || !patch.filePath) continue;
       const fullPath = path.join(projectPath, patch.filePath);
       const backupPath = `${fullPath}.deployflow-backup`;
 

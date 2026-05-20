@@ -59,6 +59,17 @@ class ErrorFixer {
     // We call it multiple times — each time after applying a fix
     async fixBuildErrors(projectPath, errorOutput, buildFn, onProgress, showDiff) {
         const maxAttempts = this.configManager.getMaxFixAttempts();
+        // Bail early if there's no error to fix
+        if (!errorOutput || errorOutput.trim().length === 0) {
+            const msg = "⚠️ No error output to analyze. Run the build manually to see what went wrong.";
+            onProgress(msg);
+            this.logger.warn("fixBuildErrors called with empty error output");
+            return {
+                success: false,
+                totalAttempts: 0,
+                finalError: "No error output captured — build may have crashed or timed out",
+            };
+        }
         this.logger.info(`Starting AI fix loop (max ${maxAttempts} attempts)...`);
         let currentError = errorOutput;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -81,6 +92,19 @@ class ErrorFixer {
                     finalError: currentError,
                 };
             }
+            // Safety: ensure the response has the expected shape
+            if (!fixResponse || typeof fixResponse !== "object") {
+                this.logger.error("AI returned invalid response", fixResponse);
+                onProgress("❌ AI returned an invalid response");
+                return {
+                    success: false,
+                    totalAttempts: attempt,
+                    finalError: currentError,
+                };
+            }
+            fixResponse.patches = fixResponse.patches || [];
+            fixResponse.confidence = fixResponse.confidence ?? 0;
+            fixResponse.explanation = fixResponse.explanation || "No explanation provided";
             this.logger.info(`AI confidence: ${fixResponse.confidence}% | ` +
                 `Patches: ${fixResponse.patches.length}`);
             onProgress(`💡 AI found ${fixResponse.patches.length} fix(es) with ${fixResponse.confidence}% confidence`);
@@ -144,6 +168,17 @@ class ErrorFixer {
     // `runRemoteCommand` executes a shell command on the target server
     async fixDeployErrors(errorOutput, runRemoteCommand, deployFn, onProgress) {
         const maxAttempts = this.configManager.getMaxFixAttempts();
+        // Bail early if there's no error to fix
+        if (!errorOutput || errorOutput.trim().length === 0) {
+            const msg = "⚠️ No error output to analyze. Check the error log manually.";
+            onProgress(msg);
+            this.logger.warn("fixDeployErrors called with empty error output");
+            return {
+                success: false,
+                totalAttempts: 0,
+                finalError: "No error output captured",
+            };
+        }
         this.logger.info(`Starting AI deploy fix loop (max ${maxAttempts} attempts)...`);
         let currentError = errorOutput;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -163,6 +198,19 @@ class ErrorFixer {
                     finalError: currentError,
                 };
             }
+            // Safety: ensure the response has the expected shape
+            if (!fixResponse || typeof fixResponse !== "object") {
+                this.logger.error("AI returned invalid response", fixResponse);
+                onProgress("❌ AI returned an invalid response");
+                return {
+                    success: false,
+                    totalAttempts: attempt,
+                    finalError: currentError,
+                };
+            }
+            fixResponse.remoteCommands = fixResponse.remoteCommands || [];
+            fixResponse.confidence = fixResponse.confidence ?? 0;
+            fixResponse.explanation = fixResponse.explanation || "No explanation provided";
             this.logger.info(`AI confidence: ${fixResponse.confidence}% | ` +
                 `Commands: ${fixResponse.remoteCommands.length}`);
             onProgress(`💡 AI found ${fixResponse.remoteCommands.length} fix(es) with ${fixResponse.confidence}% confidence`);
@@ -331,6 +379,10 @@ class ErrorFixer {
     // ── Apply patches to files ────────────────────────────────────────────
     async applyPatches(projectPath, patches, onProgress) {
         for (const patch of patches) {
+            if (!patch || !patch.filePath || patch.newContent === undefined) {
+                this.logger.warn("Skipping invalid patch", patch);
+                continue;
+            }
             const fullPath = path.join(projectPath, patch.filePath);
             // Create a backup before modifying
             const existing = await this.fileUtils.readFile(fullPath);
@@ -370,6 +422,8 @@ class ErrorFixer {
     // ── Restore backups if all fixes failed ───────────────────────────────
     async restoreBackups(projectPath, patches) {
         for (const patch of patches) {
+            if (!patch || !patch.filePath)
+                continue;
             const fullPath = path.join(projectPath, patch.filePath);
             const backupPath = `${fullPath}.deployflow-backup`;
             const backup = await this.fileUtils.readFile(backupPath);

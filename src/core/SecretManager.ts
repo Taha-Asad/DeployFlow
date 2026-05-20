@@ -136,6 +136,17 @@ export class SecretManager {
     }
   }
 
+  // ── Get credentials for any deploy target ──────────────────────────────
+  // Returns SSH credentials for "vps", or cloud credentials for other targets
+  public async getCredentialsForTarget(
+    target: string,
+  ): Promise<SshCredentials | Record<string, string> | null> {
+    if (target === "vps") {
+      return this.getSshCredentials();
+    }
+    return this.getCloudCredentials(target as CloudCredentials["provider"]);
+  }
+
   // ── Prompt User for SSH Details ────────────────────────────────────────
   // Shows VS Code input boxes to collect credentials interactively
   public async promptForSshCredentials(): Promise<SshCredentials | null> {

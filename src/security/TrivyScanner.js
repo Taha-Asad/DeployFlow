@@ -61,29 +61,48 @@ class TrivyScanner {
     // ── Parse Trivy JSON output ───────────────────────────────────────────────
     parseResults(imageName, jsonOutput) {
         const vulnerabilities = [];
+        let criticalCount = 0;
+        let highCount = 0;
+        let mediumCount = 0;
+        let lowCount = 0;
         try {
             const data = JSON.parse(jsonOutput);
             for (const result of data.Results || []) {
                 for (const v of result.Vulnerabilities || []) {
-                    vulnerabilities.push({
-                        id: v.VulnerabilityID,
-                        severity: v.Severity,
-                        package: v.PkgName,
-                        installedVersion: v.InstalledVersion,
-                        fixedVersion: v.FixedVersion || "no fix available",
-                        title: v.Title || v.VulnerabilityID,
-                        url: v.PrimaryURL,
-                    });
+                    const severity = v.Severity;
+                    switch (severity) {
+                        case "CRITICAL":
+                            criticalCount++;
+                            break;
+                        case "HIGH":
+                            highCount++;
+                            break;
+                        case "MEDIUM":
+                            mediumCount++;
+                            break;
+                        default:
+                            lowCount++;
+                            break;
+                    }
+                    // Only store critical and high vulnerability details
+                    // (medium/low are counted but not kept to save memory)
+                    if (severity === "CRITICAL" || severity === "HIGH") {
+                        vulnerabilities.push({
+                            id: v.VulnerabilityID,
+                            severity,
+                            package: v.PkgName,
+                            installedVersion: v.InstalledVersion,
+                            fixedVersion: v.FixedVersion || "no fix available",
+                            title: v.Title || v.VulnerabilityID,
+                            url: v.PrimaryURL,
+                        });
+                    }
                 }
             }
         }
         catch (error) {
             this.logger.warn("Failed to parse Trivy JSON output", error);
         }
-        const criticalCount = vulnerabilities.filter((v) => v.severity === "CRITICAL").length;
-        const highCount = vulnerabilities.filter((v) => v.severity === "HIGH").length;
-        const mediumCount = vulnerabilities.filter((v) => v.severity === "MEDIUM").length;
-        const lowCount = vulnerabilities.filter((v) => v.severity === "LOW").length;
         return {
             imageName,
             criticalCount,

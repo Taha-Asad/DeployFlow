@@ -30,117 +30,141 @@ export class DeployCommand {
   }
 
   public async execute(): Promise<void> {
-    // ── 1. Make sure a workspace is open ──────────────────────────────────
-    const workspaceFolder = this.configManager.getWorkspaceFolder();
-    if (!workspaceFolder) {
-      vscode.window.showErrorMessage(
-        "❌ DeployFlow: No folder open. Open a project folder first.",
-      );
-      return;
-    }
-
-    // ── 2. Load existing config or show wizard ────────────────────────────
-    let deployConfig = await this.configManager.loadDeployConfig();
-
-    if (!deployConfig) {
-      // First time — show the wizard
-      const wizard = new DeployWizard(this.configManager, this.secretManager);
-      const extensionUri = vscode.extensions.getExtension(
-        "deployflow.deployflow-ai",
-      )?.extensionUri;
-
-      if (!extensionUri) {
-        vscode.window.showErrorMessage("Could not find extension URI");
+    // Loop instead of recursion for retry — avoids stack growth
+    while (true) {
+      // ── 1. Make sure a workspace is open ────────────────────────────────
+      const workspaceFolder = this.configManager.getWorkspaceFolder();
+      if (!workspaceFolder) {
+        vscode.window.showErrorMessage(
+          "❌ DeployFlow: No folder open. Open a project folder first.",
+        );
         return;
       }
 
-      deployConfig = await wizard.show(extensionUri);
+      // ── 2. Load existing config or show wizard ──────────────────────────
+      let deployConfig = await this.configManager.loadDeployConfig();
 
       if (!deployConfig) {
-        // User cancelled the wizard
-        return;
-      }
-    } else {
-      // Config exists — ask if they want to reconfigure or just deploy
-      const choice = await vscode.window.showQuickPick(
-        [
-          {
-            label: "🚀 Deploy Now",
-            description: `to ${deployConfig.target}`,
-            value: "deploy",
-          },
-          {
-            label: "⚙️ Reconfigure",
-            description: "change target or settings",
-            value: "configure",
-          },
-        ],
-        { placeHolder: "What would you like to do?" },
-      );
-
-      if (!choice) {
-        return;
-      }
-
-      if (choice.value === "configure") {
         const wizard = new DeployWizard(this.configManager, this.secretManager);
         const extensionUri = vscode.extensions.getExtension(
           "deployflow.deployflow-ai",
         )?.extensionUri;
+
         if (!extensionUri) {
+          vscode.window.showErrorMessage("Could not find extension URI");
           return;
         }
 
         deployConfig = await wizard.show(extensionUri);
+
         if (!deployConfig) {
           return;
         }
+      } else {
+        const items: vscode.QuickPickItem[] = [];
+        const isRedeploy = !!deployConfig.lastDeployedUrl;
+
+        if (isRedeploy) {
+          items.push({
+            label: "🔄 Re-deploy",
+            description: `Update ${deployConfig.target} deployment at ${deployConfig.lastDeployedUrl}`,
+            value: "deploy",
+          } as vscode.QuickPickItem & { value: string });
+        }
+
+        items.push({
+          label: isRedeploy ? "🚀 Deploy (new project)" : "🚀 Deploy Now",
+          description: `to ${deployConfig.target}`,
+          value: "deploy",
+        } as vscode.QuickPickItem & { value: string });
+
+        items.push({
+          label: "⚙️ Reconfigure",
+          description: "change target or settings",
+          value: "configure",
+        } as vscode.QuickPickItem & { value: string });
+
+        const choice = await vscode.window.showQuickPick(items, {
+          placeHolder: "What would you like to do?",
+        });
+
+        if (!choice) {
+          return;
+        }
+
+        if ((choice as any).value === "configure") {
+          const wizard = new DeployWizard(this.configManager, this.secretManager);
+          const extensionUri = vscode.extensions.getExtension(
+            "deployflow.deployflow-ai",
+          )?.extensionUri;
+          if (!extensionUri) {
+            return;
+          }
+
+          deployConfig = await wizard.show(extensionUri);
+          if (!deployConfig) {
+            return;
+          }
+        }
       }
-    }
 
-    // ── 3. Show the progress panel ─────────────────────────────────────────
-    this.progressPanel.reset();
-    this.progressPanel.show();
+      // ── 3. Show the progress panel ───────────────────────────────────────
+      this.progressPanel.reset();
+      this.progressPanel.show();
 
-    // ── 4. Run the deployment workflow ────────────────────────────────────
-    const result = await this.workflowEngine.run(
-      this.progressPanel,
-      deployConfig,
-    );
+      // ── 4. Run the deployment workflow ──────────────────────────────────
+      const result = await this.workflowEngine.run(
+        this.progressPanel,
+        deployConfig,
+      );
 
-    // ── 5. Handle result ──────────────────────────────────────────────────
-    if (result.success) {
-      const message = result.deployedUrl
-        ? `✅ Deployed successfully to ${result.deployedUrl}`
-        : "✅ Deployment successful!";
+      // ── 5. Handle result ────────────────────────────────────────────────
+      if (result.success) {
+        // Save the deployed URL so future runs know it's been deployed
+        if (result.deployedUrl) {
+          deployConfig.lastDeployedUrl = result.deployedUrl;
+          deployConfig.lastDeployedAt = new Date().toISOString();
+          await this.configManager.saveDeployConfig(deployConfig);
+        }
 
-      const action = result.deployedUrl
-        ? await vscode.window.showInformationMessage(
-            message,
-            "Open App 🌐",
-            "View Logs",
-          )
-        : await vscode.window.showInformationMessage(message, "View Logs");
+        const message = result.deployedUrl
+          ? `✅ Deployed successfully to ${result.deployedUrl}`
+          : "✅ Deployment successful!";
 
-      if (action === "Open App 🌐" && result.deployedUrl) {
-        vscode.env.openExternal(vscode.Uri.parse(result.deployedUrl));
+        const action = result.deployedUrl
+          ? await vscode.window.showInformationMessage(
+              message,
+              "Open App 🌐",
+              "View Logs",
+            )
+          : await vscode.window.showInformationMessage(message, "View Logs");
+
+        if (action === "Open App 🌐" && result.deployedUrl) {
+          vscode.env.openExternal(vscode.Uri.parse(result.deployedUrl));
+        }
+        if (action === "View Logs") {
+          this.progressPanel.show();
+        }
+        return; // Success — exit the loop
       }
-      if (action === "View Logs") {
-        this.progressPanel.show();
-      }
-    } else {
+
+      const errorMsg = result.error
+        ? `❌ Deployment failed: ${result.error}`
+        : "❌ Deployment failed (unknown error — check logs)";
       const action = await vscode.window.showErrorMessage(
-        `❌ Deployment failed: ${result.error}`,
+        errorMsg,
         "View Logs",
         "Retry",
       );
 
       if (action === "View Logs") {
         this.progressPanel.show();
+        return;
       }
-      if (action === "Retry") {
-        await this.execute();
+      if (action !== "Retry") {
+        return;
       }
+      // Otherwise, loop back and retry
     }
   }
 }

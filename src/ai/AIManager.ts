@@ -241,6 +241,8 @@ export class AIManager {
 
   // ── Build the prompt we send to the AI ───────────────────────────────
   private readonly MAX_PROMPT_SIZE = 100_000; // characters
+  // Max chars per file in prompt context — prevents one huge file from blowing up memory
+  private readonly MAX_FILE_CONTEXT_SIZE = 4_000;
 
   private buildFixPrompt(
     errorOutput: string,
@@ -253,10 +255,20 @@ export class AIManager {
           `\n\n[...truncated, was ${errorOutput.length} chars]`
         : errorOutput;
 
-    let filesContext = "";
+    const fileParts: string[] = [];
+    let filesTotal = 0;
+    const maxFilesTotal = this.MAX_PROMPT_SIZE - MAX_ERROR_LENGTH - 2000;
     for (const [filePath, content] of projectFiles) {
-      filesContext += `\n### File: ${filePath}\n\`\`\`\n${content}\n\`\`\`\n`;
+      const truncated = content.length > this.MAX_FILE_CONTEXT_SIZE
+        ? content.slice(0, this.MAX_FILE_CONTEXT_SIZE) +
+          `\n[...truncated, was ${content.length} chars]`
+        : content;
+      const part = `\n### File: ${filePath}\n\`\`\`\n${truncated}\n\`\`\``;
+      if (filesTotal + part.length > maxFilesTotal) break;
+      fileParts.push(part);
+      filesTotal += part.length;
     }
+    const filesContext = fileParts.join("");
 
     const prompt = `You are an expert software engineer helping to fix a build error.
 

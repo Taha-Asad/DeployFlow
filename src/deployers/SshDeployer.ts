@@ -358,15 +358,27 @@ export class SshDeployer {
 
           let stdout = "";
           let stderr = "";
+          let outputCapped = false;
 
-          // Collect command output
+          const MAX_SSH_OUTPUT = 1024 * 1024; // 1MB cap
+
           stream.on("data", (data: Buffer) => {
+            if (outputCapped) return;
             stdout += data.toString();
+            if (stdout.length > MAX_SSH_OUTPUT) {
+              stdout = stdout.slice(0, MAX_SSH_OUTPUT) +
+                `\n[...output truncated at ${MAX_SSH_OUTPUT} bytes]`;
+              outputCapped = true;
+            }
           });
 
-          // Collect error output
           stream.stderr.on("data", (data: Buffer) => {
+            if (outputCapped && stderr.length > MAX_SSH_OUTPUT) return;
             stderr += data.toString();
+            if (stderr.length > MAX_SSH_OUTPUT) {
+              stderr = stderr.slice(0, MAX_SSH_OUTPUT) +
+                `\n[...output truncated at ${MAX_SSH_OUTPUT} bytes]`;
+            }
           });
 
           // Command finished
@@ -391,12 +403,21 @@ export class SshDeployer {
         });
       });
 
+      const MAX_SSH_OUTPUT = 1024 * 1024; // 1MB cap per remote command
+
       conn.on("error", (err) => {
+        conn.end();
         reject(new Error(`SSH connection failed: ${err.message}`));
       });
 
       // Connect to the server using credentials
       conn.connect(this.buildConnectConfig(creds));
+
+      // Safety timeout: if command doesn't complete in 5 minutes, force close
+      setTimeout(() => {
+        conn.end();
+        reject(new Error(`SSH command timed out after 5 minutes: ${command.substring(0, 100)}`));
+      }, 300000);
     });
   }
 

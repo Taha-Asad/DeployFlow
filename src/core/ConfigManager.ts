@@ -21,6 +21,9 @@ export interface DeployConfig {
   region?: string; // For cloud providers: 'us-east-1', etc.
   projectId?: string; // For GCP
   resourceGroup?: string; // For Azure
+  lastDeployedUrl?: string; // URL from the last successful deployment
+  lastDeployedAt?: string; // ISO timestamp of last deployment
+  publishDir?: string; // Override the auto-detected publish directory (e.g. "build", "dist", ".next")
 }
 
 export class ConfigManager {

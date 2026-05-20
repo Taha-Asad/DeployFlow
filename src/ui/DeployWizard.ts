@@ -14,34 +14,34 @@ const TARGETS = [
 
 const CREDENTIAL_FIELDS: Record<string, Array<{ id: string; label: string; password?: boolean; hint?: string; placeholder?: string }>> = {
   vps: [
-    { id: "vps-host", label: "Server IP / Hostname", placeholder: "192.168.1.100 or myserver.com" },
-    { id: "vps-port", label: "SSH Port", placeholder: "22", hint: "Default: 22" },
-    { id: "vps-user", label: "SSH Username", placeholder: "root" },
-    { id: "vps-pass", label: "SSH Password", password: true, placeholder: "Enter password", hint: "Or use SSH key auth via Configure DeployFlow" },
+    { id: "vps-host", label: "Server IP / Hostname", placeholder: "192.168.1.100 or myserver.com", hint: "Public IP or domain of your VPS. Get it from your cloud provider dashboard (DigitalOcean, Linode, AWS EC2, etc.)" },
+    { id: "vps-port", label: "SSH Port", placeholder: "22", hint: "Default: 22. Change if your server uses a custom SSH port." },
+    { id: "vps-user", label: "SSH Username", placeholder: "root", hint: "Usually 'root' or 'ubuntu'. Use the user you SSH into the server with." },
+    { id: "vps-pass", label: "SSH Password", password: true, placeholder: "Enter password", hint: "Your SSH password. Or use SSH key auth via \u2699\uFE0F Configure DeployFlow for passwordless login." },
   ],
   vercel: [
-    { id: "vercel-token", label: "Vercel Token", password: true, hint: "Get from: vercel.com \u2192 Settings \u2192 Tokens" },
+    { id: "vercel-token", label: "Vercel Token", password: true, hint: "1. Go to https://vercel.com/account/tokens  2. Click 'Create Token'  3. Name it (e.g. 'deployflow')  4. Copy the token and paste it here" },
   ],
   netlify: [
-    { id: "netlify-token", label: "Netlify Auth Token", password: true, hint: "Get from: app.netlify.com \u2192 User Settings \u2192 Applications" },
+    { id: "netlify-token", label: "Netlify Auth Token", password: true, hint: "1. Go to https://app.netlify.com/user/applications  2. Under 'Personal access tokens', click 'New access token'  3. Copy the token and paste it here" },
   ],
   cloudflare: [
-    { id: "cf-token", label: "Cloudflare API Token", password: true },
-    { id: "cf-account", label: "Cloudflare Account ID" },
+    { id: "cf-token", label: "Cloudflare API Token", password: true, hint: "1. Go to https://dash.cloudflare.com/profile/api-tokens  2. Click 'Create Token'  3. Use 'Edit Cloudflare Workers' template or create custom with 'Pages:Write' permission  4. Copy and paste the token here" },
+    { id: "cf-account", label: "Cloudflare Account ID", hint: "1. Go to https://dash.cloudflare.com  2. In right sidebar under your account name, find 'Account ID'  3. Or go to any zone overview page and find 'Account ID' in right sidebar" },
   ],
   aws: [
-    { id: "aws-key-id", label: "AWS Access Key ID" },
-    { id: "aws-secret", label: "AWS Secret Access Key", password: true },
-    { id: "aws-region", label: "AWS Region" },
+    { id: "aws-key-id", label: "AWS Access Key ID", hint: "1. Go to https://console.aws.amazon.com/iam → Users → your user → Security credentials  2. Under 'Access keys', click 'Create access key'  3. Copy the 'Access key ID' here" },
+    { id: "aws-secret", label: "AWS Secret Access Key", password: true, hint: "Copy the 'Secret access key' shown when you created the access key (only shown once!)" },
+    { id: "aws-region", label: "AWS Region", placeholder: "us-east-1", hint: "e.g. us-east-1, us-west-2, eu-west-1, ap-southeast-1. Find it in your AWS console top-right corner." },
   ],
   gcp: [
-    { id: "gcp-project", label: "GCP Project ID" },
-    { id: "gcp-region", label: "GCP Region" },
+    { id: "gcp-project", label: "GCP Project ID", hint: "1. Go to https://console.cloud.google.com  2. At the top bar, click the project dropdown → 'New Project' or select existing  3. Copy the 'Project ID' (not the name) from the project info card" },
+    { id: "gcp-region", label: "GCP Region", placeholder: "us-central1", hint: "e.g. us-central1, europe-west1, asia-east1. Choose a region close to your users." },
   ],
   azure: [
-    { id: "azure-sub", label: "Azure Subscription ID" },
-    { id: "azure-rg", label: "Resource Group" },
-    { id: "azure-region", label: "Region" },
+    { id: "azure-sub", label: "Azure Subscription ID", hint: "1. Go to https://portal.azure.com  2. Search for 'Subscriptions' in the top bar  3. Select your subscription and copy the 'Subscription ID' (a UUID like 00000000-0000-0000-0000-000000000000)" },
+    { id: "azure-rg", label: "Resource Group", hint: "1. In Azure Portal, search for 'Resource groups'  2. Create a new one or select existing  3. Enter the name here. E.g. 'deployflow-rg'" },
+    { id: "azure-region", label: "Region", placeholder: "eastus", hint: "e.g. eastus, westeurope, southeastasia. Use the region closest to your users." },
   ],
 };
 

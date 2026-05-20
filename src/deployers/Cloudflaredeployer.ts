@@ -45,33 +45,37 @@ export class CloudflareDeployer extends BaseDeployer {
         await this.shell.run("npm install -g wrangler");
       }
 
-      // ── 2. Deploy to Cloudflare Pages ─────────────────────────────────
-      onProgress("🚀 Deploying to Cloudflare Pages...");
+      // Resolve wrangler binary path
+      const wranglerPath = await this.resolveWranglerPath();
 
+      // ── 2. Determine publish directory ────────────────────────────────
       const publishDir = projectInfo.type === "frontend" ? "dist" : ".";
+      const publishPath = path.join(projectInfo.rootPath, publishDir);
+      onProgress(`📁 Publish directory: "${publishDir}"`);
+      onProgress(`🔗 Full deploy path: "${publishPath}"`);
+
+      // ── 3. Deploy to Cloudflare Pages ─────────────────────────────────
+      onProgress(`🚀 Deploying to Cloudflare Pages as "${projectName}"...`);
 
       const env: Record<string, string> = {
         CLOUDFLARE_API_TOKEN: apiToken,
         CLOUDFLARE_ACCOUNT_ID: accountId,
       };
 
-      const result = await this.shell.runStreaming(
-        "wrangler",
-        [
-          "pages",
-          "deploy",
-          path.join(projectInfo.rootPath, publishDir),
-          "--project-name",
-          projectName,
-          "--commit-dirty=true",
-        ],
-        {
-          cwd: projectInfo.rootPath,
-          env,
-          onOutput: (line) => onProgress(`  ${line}`),
-          timeout: 300000,
-        },
-      );
+      let result = await this.runWranglerDeploy(wranglerPath, publishPath, projectName, env, projectInfo, onProgress);
+
+      // If project doesn't exist, create it and retry
+      if (!result.success && this.isProjectNotFoundError(result.stderr)) {
+        onProgress(`📦 Project "${projectName}" not found — creating it...`);
+        const createResult = await this.runWranglerCreate(wranglerPath, projectName, env, onProgress);
+        if (!createResult.success) {
+          throw new Error(
+            `Failed to create Cloudflare Pages project "${projectName}": ${createResult.stderr}`
+          );
+        }
+        onProgress(`✅ Project "${projectName}" created`);
+        result = await this.runWranglerDeploy(wranglerPath, publishPath, projectName, env, projectInfo, onProgress);
+      }
 
       if (!result.success) {
         throw new Error(result.stderr || "Cloudflare Pages deployment failed");
@@ -87,5 +91,70 @@ export class CloudflareDeployer extends BaseDeployer {
     } catch (error) {
       return this.errorResult(error);
     }
+  }
+
+  private async resolveWranglerPath(): Promise<string> {
+    const result = await this.shell.run("which wrangler");
+    if (result.success && result.stdout.trim()) {
+      return result.stdout.trim();
+    }
+    return "wrangler";
+  }
+
+  private isProjectNotFoundError(stderr: string): boolean {
+    return (
+      stderr.includes("Project not found") ||
+      stderr.includes("code: 8000007") ||
+      stderr.includes("does not match any of your existing projects")
+    );
+  }
+
+  private async runWranglerDeploy(
+    wranglerPath: string,
+    publishPath: string,
+    projectName: string,
+    env: Record<string, string>,
+    projectInfo: ProjectInfo,
+    onProgress: (msg: string) => void,
+  ) {
+    const args = [
+      "pages",
+      "deploy",
+      publishPath,
+      "--project-name",
+      projectName,
+      "--commit-dirty=true",
+    ];
+    onProgress(`⚙️ Running: wrangler ${args.join(" ")}`);
+
+    return await this.shell.runStreaming(wranglerPath, args, {
+      cwd: projectInfo.rootPath,
+      env,
+      onOutput: (line) => onProgress(`  ${line}`),
+      timeout: 300000,
+    });
+  }
+
+  private async runWranglerCreate(
+    wranglerPath: string,
+    projectName: string,
+    env: Record<string, string>,
+    onProgress: (msg: string) => void,
+  ) {
+    const args = [
+      "pages",
+      "project",
+      "create",
+      projectName,
+      "--production-branch",
+      "main",
+    ];
+    onProgress(`⚙️ Running: wrangler ${args.join(" ")}`);
+
+    return await this.shell.runStreaming(wranglerPath, args, {
+      env,
+      onOutput: (line) => onProgress(`  ${line}`),
+      timeout: 60000,
+    });
   }
 }

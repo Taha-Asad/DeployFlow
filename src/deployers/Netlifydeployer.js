@@ -41,17 +41,20 @@ exports.NetlifyDeployer = void 0;
 const path = __importStar(require("path"));
 const BaseDeployer_1 = require("./BaseDeployer");
 const ShellUtils_1 = require("../utils/ShellUtils");
+const FileUtils_1 = require("../utils/FileUtils");
 class NetlifyDeployer extends BaseDeployer_1.BaseDeployer {
     shell;
+    fileUtils;
     constructor() {
         super();
         this.shell = new ShellUtils_1.ShellUtils();
+        this.fileUtils = new FileUtils_1.FileUtils();
     }
     async deploy(projectInfo, config, credentials, onProgress) {
         try {
             this.validateCredentials(credentials, ["NETLIFY_AUTH_TOKEN"]);
             const token = credentials["NETLIFY_AUTH_TOKEN"];
-            const siteId = credentials["NETLIFY_SITE_ID"]; // Optional — creates new site if missing
+            const siteId = credentials["NETLIFY_SITE_ID"];
             // ── 1. Ensure Netlify CLI ──────────────────────────────────────────
             const cliExists = await this.shell.commandExists("netlify");
             if (!cliExists) {
@@ -59,26 +62,46 @@ class NetlifyDeployer extends BaseDeployer_1.BaseDeployer {
                 await this.shell.run("npm install -g netlify-cli");
             }
             // ── 2. Determine publish directory ────────────────────────────────
-            const publishDir = this.getPublishDir(projectInfo);
-            onProgress(`📁 Publish directory: ${publishDir}`);
+            const publishDir = await this.getPublishDir(projectInfo, config);
+            const publishPath = path.join(projectInfo.rootPath, publishDir);
+            onProgress(`📁 Publish directory: "${publishDir}"`);
+            onProgress(`📂 Project root: "${projectInfo.rootPath}"`);
+            onProgress(`🔗 Full deploy path: "${publishPath}"`);
+            this.logger.info(`Netlify deploy: framework=${projectInfo.framework} type=${projectInfo.type}`);
+            this.logger.info(`Netlify deploy: publishDir="${publishDir}" publishPath="${publishPath}"`);
+            // ── 2b. Verify publish directory exists ────────────────────────────
+            if (!(await this.fileUtils.exists(publishPath))) {
+                throw new Error(
+                    `Publish directory "${publishDir}" not found at "${publishPath}". ` +
+                    `Detected framework: ${projectInfo.framework} (${projectInfo.type}). ` +
+                    `The build step may not have produced the expected output directory. ` +
+                    `Run the build command ("${projectInfo.buildCommand}") first, or set a custom ` +
+                    `publish directory via the DeployFlow config (publishDir field in .deployflow/config.json).`
+                );
+            }
             // ── 3. Deploy ──────────────────────────────────────────────────────
             onProgress("🚀 Deploying to Netlify...");
+            // Resolve full path to netlify CLI (needed when running without shell)
+            const netlifyPath = await this.resolveNetlifyPath();
+            onProgress(`  (netlify binary: ${netlifyPath})`);
             const env = { NETLIFY_AUTH_TOKEN: token };
             if (siteId)
                 env["NETLIFY_SITE_ID"] = siteId;
             const args = [
                 "deploy",
                 "--prod",
+                "--no-build",
                 "--dir",
-                path.join(projectInfo.rootPath, publishDir),
-                "--message",
-                `DeployFlow AI deployment ${new Date().toISOString()}`,
+                publishPath,
             ];
-            const result = await this.shell.runStreaming("netlify", args, {
+            onProgress(`⚙️ Running: netlify ${args.join(" ")}`);
+            onProgress(`  (publishPath="${publishPath}")`);
+            const result = await this.shell.runStreaming(netlifyPath, args, {
                 cwd: projectInfo.rootPath,
                 env,
                 onOutput: (line) => onProgress(`  ${line}`),
                 timeout: 300000,
+                useShell: false,
             });
             if (!result.success) {
                 throw new Error(result.stderr || "Netlify deployment failed");
@@ -95,12 +118,60 @@ class NetlifyDeployer extends BaseDeployer_1.BaseDeployer {
             return this.errorResult(error);
         }
     }
-    getPublishDir(info) {
-        if (info.framework === "react-cra")
-            return "build";
-        if (info.type === "frontend")
-            return "dist";
+    async getPublishDir(info, config) {
+        // 1. User-configured override takes precedence
+        if (config.publishDir) {
+            return config.publishDir;
+        }
+        // 2. Check netlify.toml for [build] publish setting
+        const tomlDir = await this.readPublishDirFromToml(info.rootPath);
+        if (tomlDir) {
+            return tomlDir;
+        }
+        // 3. Framework-specific maps
+        const frameworkMap = {
+            "react-cra":   "build",
+            "react-vite":  "dist",
+            "react":       "build",
+            "vue-vite":    "dist",
+            "vue-cli":     "dist",
+            "angular":     "dist",
+            "svelte":      "dist",
+            "sveltekit":   "build",
+            "vite":        "dist",
+            "nextjs":      ".next",
+            "nuxtjs":      ".output",
+            "nestjs":      "dist",
+            "express":     "dist",
+        };
+        if (frameworkMap[info.framework]) {
+            return frameworkMap[info.framework];
+        }
+        // 4. Fallback by project type
+        if (info.type === "frontend") return "dist";
+        if (info.type === "fullstack") return "dist";
+        // 5. Last resort
         return "dist";
+    }
+    async resolveNetlifyPath() {
+        const result = await this.shell.run("which netlify");
+        if (result.success && result.stdout.trim()) {
+            return result.stdout.trim();
+        }
+        return "netlify";
+    }
+    async readPublishDirFromToml(rootPath) {
+        const tomlPath = path.join(rootPath, "netlify.toml");
+        const content = await this.fileUtils.readFile(tomlPath);
+        if (!content) return null;
+        // Simple TOML parser for [build] publish field
+        const buildSection = content.match(/\[build\]\s*\n([\s\S]*?)(?=\[|\s*$)/);
+        if (!buildSection) return null;
+        const buildBody = buildSection[1];
+        const publishMatch = buildBody.match(/publish\s*=\s*"([^"]+)"/);
+        if (!publishMatch) return null;
+        const dir = publishMatch[1].trim();
+        return dir || null;
     }
 }
 exports.NetlifyDeployer = NetlifyDeployer;
